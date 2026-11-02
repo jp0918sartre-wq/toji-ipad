@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="都名所">
+<meta name="theme-color" content="#3a2620">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>都名所（iPad）</title>
+<link rel="stylesheet" href="style.css">
+<style>
+/* ===== 読みやすさ(2026-10-13・アプリ共通。元は _共通\読みやすさ.css) =====
+   字体を BIZ UDPゴシック(無ければメイリオ)にし、灰色の字を濃くする。字の大きさは変えない(アプリごとに小さくしたい所があるため) */
+:root{--ink:#141b24;--ink2:#36414e;--ink3:#5e6875}
+/* 英数字(日付・番号など)だけはメイリオにする(2026-10-13・山下さん「メイリオでいきましょう」。日本語は BIZ UDPゴシック)(2026-10-13・山下さん「数字がワンサイズ大きすぎる、日付が改行する」) */
+@font-face{font-family:"EisuYu";src:local("Meiryo"),local("メイリオ");font-weight:100 500;unicode-range:U+0020-007E}
+@font-face{font-family:"EisuYu";src:local("Meiryo Bold"),local("Meiryo-Bold"),local("メイリオ ボールド");font-weight:600 900;unicode-range:U+0020-007E}
+body{font-family:"EisuYu","BIZ UDPGothic","BIZ UDPゴシック","Meiryo","メイリオ","Hiragino Kaku Gothic ProN",sans-serif;-webkit-font-smoothing:antialiased}
+</style>
+<style>
+/* ===== メニューの大見出しを見えるように(2026-10-13・アプリ共通。元は _共通\読みやすさ.css) =====
+   左の黒いメニューの「全体」「法令」などの見出しが、暗い灰色・小さい字でほとんど見えなかった(山下さん) */
+nav .grp{color:#c3cfdc !important;font-size:12px !important;font-weight:700 !important;letter-spacing:.1em;opacity:1 !important;border-top:1px solid rgba(255,255,255,.12);margin-top:6px}
+nav .grp:first-child{border-top:none;margin-top:0}
+/* 見出しの左に短い色の線(2026-10-13・山下さん了承。法令管理で試して採用) */
+nav .grp{position:relative;padding-left:28px !important}
+nav .grp::before{content:"";position:absolute;left:16px;top:calc(50% + 2px);transform:translateY(-50%);width:4px;height:14px;border-radius:2px;background:#d08c6b}
+/* メニューの幅を 200→250px に(2026-10-13・山下さん了承。字体を変えて名前が2行に折れていたため) */
+@media (min-width:761px){aside:has(> nav),nav.side{width:250px !important;flex:0 0 250px !important}}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside>
+    <h1 id="app-title">都名所（iPad）</h1>
+    <div class="sub">持ち出し用・ネットが無くても使える</div>
+    <nav>
+      <div class="grp">見る</div>
+      <a data-view="home"><span class="ic">◧</span>名所</a>
+      <a data-view="books"><span class="ic">▤</span>本の台帳</a>
+      <a data-view="search"><span class="ic">⌕</span>翻刻から探す</a>
+      <a data-view="kake"><span class="ic">∞</span>掛詞</a>
+      <a data-view="changes"><span class="ic">↺</span>iPadで直したところ <span id="cbadge" class="nbadge"></span></a>
+      <div class="grp">受け渡し・出力</div>
+      <a data-view="mochi"><span class="ic">⇄</span>持ち出し・持ち帰り</a>
+      <a data-view="export"><span class="ic">⇩</span>Word・Excelに出力</a>
+    </nav>
+    <div class="foot" id="foot"></div>
+  </aside>
+  <main id="main"><p class="lead">読み込み中…</p></main>
+</div>
+<div id="ov" hidden><button id="ov-x" aria-label="閉じる">✕ 閉じる</button><div id="ov-body"></div></div>
+<script src="lib/jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
