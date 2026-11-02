@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-02";
+const APPVER = "2026-11-03";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -29,18 +29,18 @@ const kvGet = k => req(tx("kv").objectStore("kv").get(k));
 const kvSet = (k, v) => { const t = tx("kv", "readwrite"); t.objectStore("kv").put(v, k); return done(t); };
 const getAll = s => req(tx(s).objectStore(s).getAll());
 
-let META = null, D = {appear: new Map(), book: new Map(), meisho: new Map(), kake: new Map()}, PDF = new Map(), BOOKPDF = [], PDFHAVE = new Set(), NCHG = 0;
+let META = null, D = {appear: new Map(), book: new Map(), meisho: new Map(), kake: new Map()}, PDF = new Map(), BOOKPDF = [], PDFHAVE = new Set(), PDFINFO = {}, NCHG = 0;
 async function loadAll() {
+  PDFHAVE = new Set(await req(tx("pdfs").objectStore("pdfs").getAllKeys())); PDFINFO = (await kvGet("pdfinfo")) || {};
   META = await kvGet("meta"); if (!META) return;
   HF = META.hf || HF;
   for (const s of STORES) D[s] = new Map((await getAll(s)).map(r => [r.id, r]));
   PDF = new Map(((await kvGet("pdf")) || []).map(r => [r.id, r])); BOOKPDF = (await kvGet("book_pdf")) || [];
-  PDFHAVE = new Set(await req(tx("pdfs").objectStore("pdfs").getAllKeys()));
   NCHG = await req(tx("changes").objectStore("changes").count());
 }
 function foot() {
   $("#cbadge").textContent = NCHG || "";
-  $("#foot").innerHTML = META ? `持ち出し ${esc(META.exported_at)}<br>本 ${fmt(D.book.size)}・名所 ${fmt(D.meisho.size)}<br>出てくる所 ${fmt(D.appear.size)}<br>PDF ${fmt(PDFHAVE.size)} 個<br>iPadで直した ${fmt(NCHG)} か所<br><span style="opacity:.6">画面 ${APPVER}</span>`
+  $("#foot").innerHTML = META ? `持ち出し ${esc(META.exported_at)}<br>本 ${fmt(D.book.size)}・名所 ${fmt(D.meisho.size)}<br>出てくる所 ${fmt(D.appear.size)}<br>PDF ${fmt(PDFHAVE.size)} 個入っている<br>iPadで直した ${fmt(NCHG)} か所<br><span style="opacity:.6">画面 ${APPVER}</span>`
     : `まだ持ち出しファイルを取り込んでいません<br><span style="opacity:.6">画面 ${APPVER}</span>`;
 }
 function need() { if (META) return false; main().innerHTML = `<h2>はじめに</h2><div class="card"><p>まだデータが入っていません。「持ち出し・持ち帰り」で、家のPCで作った持ち出しファイルを取り込んでください。</p><button class="btn pri" onclick="go('mochi')">持ち出し・持ち帰りへ</button></div>`; return true; }
@@ -49,18 +49,67 @@ const book = id => D.book.get(id) || {};
 const apYear = a => book(a.book_id).year;
 const byYear = (a, b) => (apYear(a) || 9999) - (apYear(b) || 9999) || (a.sort || 0) - (b.sort || 0);
 
-// ------------------------------------------------------------ PDF(持ち出しに入れた分だけ。重ねて開く)
-const urlCache = new Map();
-async function pdfURL(id) {
-  if (urlCache.has(id)) return urlCache.get(id);
-  const r = await req(tx("pdfs").objectStore("pdfs").get(id)); if (!r) return null;
-  const u = URL.createObjectURL(new Blob([r.blob], {type: "application/pdf"})); urlCache.set(id, u); return u;
+// ------------------------------------------------------------ PDF(iPadに入れた分。重ねて開く。頁を指定して開く)
+// PDFは IndexedDB の pdfs に {id, blob}。PDFINFO(kv "pdfinfo")に {id: {root, relpath, pages, size, bundle, made_at}}。
+// 表示は pdf.js。PDFをまるごと読み込まず、要る所だけ Blob から切り出して読む(大きいPDFでもメモリを食わない)。
+const pdfName = id => ((PDF.get(id) || PDFINFO[id] || {}).relpath || String(id)).split("\\").pop();
+function loadPdfjs() {
+  return new Promise((ok, ng) => { if (window.pdfjsLib) return ok(); const s = document.createElement("script"); s.src = "lib/pdfjs/pdf.min.js";
+    s.onload = () => { pdfjsLib.GlobalWorkerOptions.workerSrc = "lib/pdfjs/pdf.worker.min.js"; ok(); }; s.onerror = () => ng(new Error("PDFを見る部品を読めませんでした")); document.head.append(s); });
 }
+const PV = {doc: null, id: null, page: 1, zoom: 1, task: null, rot: 0};
 async function openPdf(id, page) {
-  const u = await pdfURL(id); if (!u) { alert("このPDFは持ち出しファイルに入っていません。"); return; }
-  $("#ov-body").innerHTML = `<iframe src="${u}#page=${page || 1}" style="width:100%;height:100%;border:0"></iframe>`; $("#ov").hidden = false;
+  const r = await req(tx("pdfs").objectStore("pdfs").get(id));
+  if (!r) { alert("このPDFはまだiPadに入っていません。「PDF」の画面で、PCで作ったPDFの束を入れてください。"); return; }
+  await loadPdfjs();
+  if (PV.doc && PV.id !== id) { try { PV.doc.destroy(); } catch (e) {} PV.doc = null; }
+  $("#ov-body").innerHTML = `<div class="pv-bar"><button class="btn" id="pv-p">◀ 前</button><input id="pv-n" type="number" min="1" value="${page || 1}"><span id="pv-t" class="pv-t"></span><button class="btn" id="pv-nx">次 ▶</button>
+    <span style="flex:1"></span><button class="btn" id="pv-zo">－</button><span id="pv-z" class="pv-t">100%</span><button class="btn" id="pv-zi">＋</button><button class="btn" id="pv-fit">幅に合わせる</button><button class="btn" id="pv-r">↻</button></div>
+    <div class="pv-name">${esc(pdfName(id))}</div><div id="pv-wrap"><canvas id="pv-c"></canvas><div id="pv-msg" class="pv-msg">開いています…</div></div>`;
+  $("#ov").hidden = false;
+  try {
+    if (!PV.doc) {
+      const blob = r.blob, len = blob.size;
+      const head = new Uint8Array(await blob.slice(0, Math.min(len, 262144)).arrayBuffer());
+      const tr = new pdfjsLib.PDFDataRangeTransport(len, head);
+      tr.requestDataRange = (b, e) => { blob.slice(b, e).arrayBuffer().then(ab => tr.onDataRange(b, new Uint8Array(ab))); };
+      PV.doc = await pdfjsLib.getDocument({range: tr, length: len, rangeChunkSize: 262144, disableAutoFetch: true, disableStream: true,
+        cMapUrl: "lib/pdfjs/cmaps/", cMapPacked: true, isEvalSupported: false}).promise;
+      PV.id = id; PV.zoom = 1; PV.rot = 0;
+    }
+  } catch (ex) { $("#pv-msg").textContent = "開けませんでした：" + ex.message; return; }
+  $("#pv-t").textContent = `／ ${PV.doc.numPages}`;
+  const goPage = n => { PV.page = Math.max(1, Math.min(PV.doc.numPages, n | 0 || 1)); $("#pv-n").value = PV.page; drawPage(); };
+  $("#pv-p").onclick = () => goPage(PV.page - 1); $("#pv-nx").onclick = () => goPage(PV.page + 1);
+  $("#pv-n").onchange = () => goPage(Number($("#pv-n").value));
+  $("#pv-zi").onclick = () => { PV.zoom = Math.min(4, PV.zoom * 1.25); drawPage(); }; $("#pv-zo").onclick = () => { PV.zoom = Math.max(.5, PV.zoom / 1.25); drawPage(); };
+  $("#pv-fit").onclick = () => { PV.zoom = 1; drawPage(); }; $("#pv-r").onclick = () => { PV.rot = (PV.rot + 90) % 360; drawPage(); };
+  // 左右に払って頁を送る(拡大していないときだけ)
+  let sx = null; const w = $("#pv-wrap");
+  w.addEventListener("touchstart", e => { sx = e.touches.length === 1 && PV.zoom <= 1 ? e.touches[0].clientX : null; }, {passive: true});
+  w.addEventListener("touchend", e => { if (sx == null) return; const dx = e.changedTouches[0].clientX - sx; sx = null; if (Math.abs(dx) > 80) goPage(PV.page + (dx < 0 ? 1 : -1)); });
+  goPage(page);
 }
-$("#ov-x").addEventListener("click", () => { $("#ov").hidden = true; $("#ov-body").innerHTML = ""; });
+async function drawPage() {
+  const n = PV.page, pg = await PV.doc.getPage(n); if (n !== PV.page) return;
+  const wrap = $("#pv-wrap"); if (!wrap) return;
+  const v1 = pg.getViewport({scale: 1, rotation: PV.rot});
+  const fit = Math.min((wrap.clientWidth - 8) / v1.width, PV.zoom === 1 ? (wrap.clientHeight - 8) / v1.height : 99);
+  const css = fit * PV.zoom, dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const scale = Math.min(css * dpr, 4096 / Math.max(v1.width, v1.height));
+  const vp = pg.getViewport({scale, rotation: PV.rot});
+  const c = $("#pv-c"); c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+  c.style.width = Math.floor(v1.width * css) + "px"; c.style.height = Math.floor(v1.height * css) + "px";
+  $("#pv-z").textContent = Math.round(PV.zoom * 100) + "%"; $("#pv-msg").textContent = "";
+  if (PV.task) { try { PV.task.cancel(); } catch (e) {} }
+  PV.task = pg.render({canvasContext: c.getContext("2d"), viewport: vp});
+  try { await PV.task.promise; } catch (e) { if (e && e.name !== "RenderingCancelledException") $("#pv-msg").textContent = "描けませんでした：" + e.message; }
+}
+function closeOv() { $("#ov").hidden = true; $("#ov-body").innerHTML = ""; if (PV.doc) { try { PV.doc.destroy(); } catch (e) {} PV.doc = null; PV.id = null; } }
+$("#ov-x").addEventListener("click", closeOv);
+document.addEventListener("keydown", e => { if ($("#ov").hidden) return; if (e.key === "Escape") closeOv();
+  else if (e.key === "ArrowRight" && $("#pv-nx")) $("#pv-nx").click(); else if (e.key === "ArrowLeft" && $("#pv-p")) $("#pv-p").click(); });
+window.addEventListener("resize", () => { if (!$("#ov").hidden && PV.doc) drawPage(); });
 
 // ------------------------------------------------------------ 保存(直したところは changes に記録して持ち帰る)
 let NEWID = -1;
@@ -118,7 +167,7 @@ function viewAp(id) {
   main().innerHTML = `${back("meisho/" + a.meisho_id)}<div class="bar"><h2 style="margin:0">${esc(m.name)}　／　${esc(b.title || "")}　<span class="small">${b.year || ""}</span></h2><span style="flex:1"></span>
       ${k > 0 ? `<button class="btn" onclick="go('ap/${sib[k - 1]}')">◀ 前の条</button>` : ""}<span class="small">${k + 1}／${sib.length}</span>${k < sib.length - 1 ? `<button class="btn" onclick="go('ap/${sib[k + 1]}')">次の条 ▶</button>` : ""}</div>
     <p class="small muted">${esc(a.heading || "")}</p>
-    ${pdfs.length ? `<div class="card"><div class="bar"><b>PDF</b>${pdfs.map(p => `<button class="btn sm" data-pdf="${p}">${esc((PDF.get(p) || {}).relpath?.split("\\").pop() || p)}</button>`).join("")}<span class="small">頁</span><input id="pg" type="number" value="${a.pdf_page || 1}" style="width:70px"></div></div>` : `<p class="small muted">この条のPDFは持ち出しファイルに入っていません。</p>`}
+    ${pdfs.length ? `<div class="card"><div class="bar"><b>PDF</b>${pdfs.map(p => `<button class="btn sm" data-pdf="${p}">${esc(pdfName(p))}</button>`).join("")}<span class="small">頁</span><input id="pg" type="number" value="${a.pdf_page || 1}" style="width:70px"></div></div>` : `<p class="small muted">この条のPDFはまだiPadに入っていません（「PDF」の画面でPDFの束を入れる）。</p>`}
     <div class="card form">
       <div class="row"><label>本</label><div><select id="book" style="width:100%"><option value="">（選ぶ）</option>${books.map(x => `<option value="${x.id}" ${x.id === a.book_id ? "selected" : ""}>${x.year || "????"}　${esc(x.title)}</option>`).join("")}</select></div></div>
       ${AP_F.map(([f, l]) => `<div class="row"><label>${l}</label><div><input data-a="${f}" value="${esc(a[f] || "")}" style="width:100%"></div></div>`).join("")}
@@ -194,6 +243,73 @@ async function viewChanges() {
     ${ch.slice().reverse().map(x => `<tr><td class="small">${esc(x.at)}</td><td class="small">${esc(x.tbl)} ${x.id}</td><td>${esc(x.label)}</td><td class="small">${esc(x.old.slice(0, 50))}</td><td class="small">${esc(x.new.slice(0, 50))}</td></tr>`).join("") || "<tr><td>まだありません。</td></tr>"}</table></div>`;
 }
 
+// ------------------------------------------------------------ PDF(PCの「iPad用PDFを作る.bat」で作った束を入れる・一覧から開く)
+// 束 = 圧縮しない zip(index.json と <id>.pdf)。zip をまるごと読まず、Blob を切り出してそのまま入れる(2GBの束でもメモリを食わない)。
+const u16 = (v, o) => v.getUint16(o, true), u32 = (v, o) => v.getUint32(o, true);
+async function zipEntries(file) {
+  const tail = Math.min(file.size, 65557 + 22), tb = new DataView(await file.slice(file.size - tail).arrayBuffer());
+  let e = -1; for (let i = tail - 22; i >= 0; i--) if (u32(tb, i) === 0x06054b50) { e = i; break; }
+  if (e < 0) throw new Error("zip ではありません");
+  const cdSize = u32(tb, e + 12), cdOff = u32(tb, e + 16);
+  const cd = new DataView(await file.slice(cdOff, cdOff + cdSize).arrayBuffer()); const dec = new TextDecoder("utf-8"); const out = [];
+  for (let o = 0; o + 46 <= cdSize && u32(cd, o) === 0x02014b50;) {
+    const meth = u16(cd, o + 10), csz = u32(cd, o + 20), nl = u16(cd, o + 28), xl = u16(cd, o + 30), cl = u16(cd, o + 32), lho = u32(cd, o + 42);
+    out.push({name: dec.decode(new Uint8Array(cd.buffer, o + 46, nl)), meth, csz, lho}); o += 46 + nl + xl + cl;
+  }
+  for (const x of out) { const lh = new DataView(await file.slice(x.lho, x.lho + 30).arrayBuffer()); if (u32(lh, 0) !== 0x04034b50) throw new Error("zip が壊れています");
+    x.start = x.lho + 30 + u16(lh, 26) + u16(lh, 28); x.blob = () => file.slice(x.start, x.start + x.csz, x.name.endsWith(".pdf") ? "application/pdf" : ""); }
+  return out;
+}
+async function importBundle(file, say) {
+  const ents = await zipEntries(file), ix = ents.find(x => x.name === "index.json");
+  if (!ix) throw new Error(`${file.name} はPDFの束ではありません`);
+  const idx = JSON.parse(await ix.blob().text()); if (idx.format !== "miyako-ipad-pdf") throw new Error(`${file.name} はPDFの束ではありません`);
+  const info = (await kvGet("pdfinfo")) || {}; let n = 0, skip = 0;
+  for (const p of idx.pdfs) {
+    const ent = ents.find(x => x.name === `${p.id}.pdf`); if (!ent || ent.meth !== 0) continue;
+    const old = info[p.id]; if (old && old.made_at && old.made_at > idx.made_at && old.bundle !== "持ち出しファイル") { skip++; continue; }   // もっと新しい束で入れたもの
+    say(`${file.name}：${++n}／${idx.pdfs.length}　${p.relpath.split("\\").pop()}`);
+    const T = tx("pdfs", "readwrite"); T.objectStore("pdfs").put({id: p.id, blob: ent.blob()}); await done(T);
+    info[p.id] = {root: p.root, relpath: p.relpath, pages: p.pages, size: p.size, mode: p.mode, bundle: idx.bundle, made_at: idx.made_at}; PDFHAVE.add(p.id);
+    if (n % 20 === 0) await kvSet("pdfinfo", info);
+  }
+  await kvSet("pdfinfo", info); PDFINFO = info; return {n, skip};
+}
+const gbs = n => n >= 1e9 ? (n / 1e9).toFixed(1) + "GB" : (n / 1e6).toFixed(0) + "MB";
+async function viewPdf(params) {
+  const sp = new URLSearchParams(params || ""), q = sp.get("q") || "", only = sp.get("all") ? "" : "1";
+  const all = new Map(); PDF.forEach((r, id) => all.set(id, {...r})); Object.entries(PDFINFO).forEach(([id, r]) => all.set(Number(id), {...(all.get(Number(id)) || {}), ...r}));
+  const rows = [...all.entries()].filter(([id, r]) => (!only || PDFHAVE.has(id)) && (!q || q.split(/\s+/).every(t => (r.relpath || "").includes(t))))
+    .sort((a, b) => (a[1].root || "").localeCompare(b[1].root || "") || (a[1].relpath || "").localeCompare(b[1].relpath || "", "ja"));
+  const bundles = {}; Object.values(PDFINFO).forEach(r => { if (PDFHAVE.size && r.bundle) { const b = bundles[r.bundle] = bundles[r.bundle] || {n: 0, size: 0, at: r.made_at}; b.n++; b.size += r.size || 0; } });
+  let est = ""; try { const e = await navigator.storage.estimate(); est = `このアプリが使っている量 ${gbs(e.usage || 0)}（使える量の目安 ${gbs(e.quota || 0)}）`; } catch (e) {}
+  main().innerHTML = `<h2>PDF</h2><p class="lead">iPadに入れたPDFは、条の画面や下の一覧から頁を指定して開けます。持ち出しファイルを取り込み直しても消えません。</p>
+    <div class="card"><h3>PDFの束を入れる</h3><p>家のPCで「iPad用PDFを作る.bat」を動かすと、都名所アプリの「iPad用PDF」フォルダに <b>iPad用PDF_01.zip、_02.zip …</b> ができます。USBメモリなどでiPadの「ファイル」に移して、ここでまとめて選びます（いくつでも一度に選べます。もう入れた束をもう一度選んでもかまいません）。</p>
+      <div class="bar"><input type="file" id="f-b" accept=".zip,application/zip" multiple><button class="btn pri" id="b-b">入れる</button></div><p class="small" id="b-msg"></p>
+      <p class="small muted">入っているPDF ${fmt(PDFHAVE.size)} 個。${esc(est)}</p>
+      ${Object.keys(bundles).length ? `<table class="tb"><tr><th>束</th><th>PDF</th><th>大きさ</th><th>作った日</th></tr>${Object.entries(bundles).sort().map(([k, b]) => `<tr><td>${esc(k)}</td><td class="num">${fmt(b.n)}</td><td class="num">${gbs(b.size)}</td><td class="small">${esc(b.at || "")}</td></tr>`).join("")}</table>` : ""}</div>
+    <div class="card"><h3>PDFの一覧</h3><div class="bar"><input id="q" value="${esc(q)}" placeholder="ファイル名・フォルダ名（例：京都叢書）"><button class="btn pri" id="b-q">絞る</button>
+      <label class="small"><input type="checkbox" id="c-all" ${only ? "" : "checked"}> iPadに入っていないものも出す</label><span class="small">${fmt(rows.length)} 個</span></div>
+      <table class="tb"><tr><th>ファイル</th><th>フォルダ</th><th class="num">頁</th><th class="num">大きさ</th><th></th></tr>
+      ${rows.slice(0, 500).map(([id, r]) => { const parts = (r.relpath || "").split("\\"); const nm = parts.pop();
+        return `<tr class="${PDFHAVE.has(id) ? "click" : ""}" data-id="${id}"><td><b>${esc(nm)}</b>${r.kind ? ` <span class="tag">${esc(r.kind)}</span>` : ""}</td><td class="small">${esc(r.root || "")}${parts.length ? "　" + esc(parts.join(" › ")) : ""}</td>
+          <td class="num">${r.pages || ""}</td><td class="num">${r.size ? gbs(r.size) : ""}</td><td>${PDFHAVE.has(id) ? "" : `<span class="tag warn">未</span>`}</td></tr>`; }).join("")}</table>
+      ${rows.length > 500 ? `<p class="small muted">はじめの500個を出しています。絞ってください。</p>` : ""}</div>`;
+  const goQ = () => go("pdf?" + new URLSearchParams({q: $("#q").value, ...($("#c-all").checked ? {all: "1"} : {})}).toString());
+  $("#b-q").addEventListener("click", goQ); $("#c-all").addEventListener("change", goQ); $("#q").addEventListener("keydown", e => { if (e.key === "Enter") goQ(); });
+  main().querySelectorAll("tr.click[data-id]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.id), 1)));
+  $("#b-b").addEventListener("click", async () => {
+    const fs = [...$("#f-b").files], msg = $("#b-msg"); if (!fs.length) { msg.textContent = "束（iPad用PDF_NN.zip）を選んでください。"; return; }
+    try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
+    let tn = 0, ts = 0;
+    for (const f of fs.sort((a, b) => a.name.localeCompare(b.name))) {
+      try { const r = await importBundle(f, t => msg.textContent = t); tn += r.n; ts += r.skip; }
+      catch (ex) { msg.textContent = `${f.name}：入れられませんでした（${ex.message}）`; if (/quota|space|容量/i.test(ex.message + ex.name)) { alert("iPadの空きが足りません。"); break; } return; }
+    }
+    foot(); await viewPdf(params); $("#b-msg").textContent = `入れました：PDF ${fmt(tn)} 個${ts ? `（新しいものが入っていたので飛ばした ${ts} 個）` : ""}。`;
+  });
+}
+
 // ------------------------------------------------------------ 持ち出し・持ち帰り
 async function share(blob, name) {
   const file = new File([blob], name, {type: blob.type});
@@ -204,7 +320,7 @@ async function share(blob, name) {
 async function viewMochi() {
   const sent = await kvGet("sent_at");
   main().innerHTML = `<h2>持ち出し・持ち帰り</h2>
-    <div class="card"><h3>① 持ち出しファイルを取り込む</h3><p>家のPCの都名所アプリで作った「都名所_持ち出し_….zip」を選びます。</p>
+    <div class="card"><h3>① 持ち出しファイルを取り込む</h3><p>家のPCの都名所アプリで作った「都名所_持ち出し_….zip」を選びます。iPadに入れたPDFは消えません。</p>
       ${META ? `<p class="small">いま入っているもの：${esc(META.exported_at)} に持ち出した分。取り込むと入れ替わります。</p>` : ""}
       <div class="bar"><input type="file" id="f-in" accept=".zip,application/zip"><button class="btn pri" id="b-in">取り込む</button></div><p class="small" id="in-msg"></p></div>
     <div class="card"><h3>② 持ち帰りファイルを作る</h3><p>このiPadで直したところ（${fmt(NCHG)} か所）を1つのファイルにします。家のPCの都名所アプリの「Excel・Wordに出力」→「持ち帰る」で取り込みます。</p>
@@ -230,18 +346,22 @@ async function importZip(file, say) {
   say("ファイルを開いています…");
   const z = await JSZip.loadAsync(file); const dj = z.file("data.json"); if (!dj) throw new Error("持ち出しファイルではありません");
   const d = JSON.parse(await dj.async("string")); if (d.format !== "miyako-mochidashi") throw new Error("都名所の持ち出しファイルではありません");
-  let T = tx(["kv", ...STORES, "pdfs", "changes"], "readwrite");
-  ["kv", ...STORES, "pdfs", "changes"].forEach(s => T.objectStore(s).clear());
+  // PDF(pdfs と pdfinfo)は消さない。PDFの束で入れたものを持ち出しのたびに入れ直さなくてよいように
+  const keep = {pdfinfo: await kvGet("pdfinfo")};
+  let T = tx(["kv", ...STORES, "changes"], "readwrite");
+  ["kv", ...STORES, "changes"].forEach(s => T.objectStore(s).clear());
+  if (keep.pdfinfo) T.objectStore("kv").put(keep.pdfinfo, "pdfinfo");
   STORES.forEach(s => (d[s] || []).forEach(r => T.objectStore(s).put(r)));
   T.objectStore("kv").put(d.pdf || [], "pdf"); T.objectStore("kv").put(d.book_pdf || [], "book_pdf");
   await done(T);
   for (const [i, pid] of (d.pdf_files || []).entries()) {
     const zf = z.file(`pdfs/${pid}.pdf`); if (!zf) continue; say(`PDFを入れています… ${i + 1}／${d.pdf_files.length}`);
     const b = await zf.async("blob"); T = tx("pdfs", "readwrite"); T.objectStore("pdfs").put({id: pid, blob: b}); await done(T);
+    const info = (await kvGet("pdfinfo")) || {}; const r = (d.pdf || []).find(x => x.id === pid) || {};
+    info[pid] = {root: r.root, relpath: r.relpath, size: b.size, bundle: "持ち出しファイル", made_at: d.exported_at}; await kvSet("pdfinfo", info);
   }
   await kvSet("meta", {exported_at: d.exported_at, hf: d.hf, book_f: d.book_f, kake_f: d.kake_f, loaded_at: nowStr()});
   await kvSet("sent_at", null); await kvSet("sent_n", 0);
-  urlCache.forEach(u => URL.revokeObjectURL(u)); urlCache.clear();
 }
 
 // ------------------------------------------------------------ Word(縦書き・A4横、返り点は小さく左下)とExcel
@@ -292,7 +412,7 @@ async function route() {
   document.querySelectorAll("nav a[data-view]").forEach(x => x.classList.toggle("on", x.dataset.view === ({ap: "home", meisho: "home", book: "books"}[v] || v)));
   try {
     if (v === "meisho") viewMeisho(Number(arg)); else if (v === "ap") viewAp(Number(arg)); else if (v === "books") viewBooks(params); else if (v === "book") viewBook(Number(arg));
-    else if (v === "search") viewSearch(params); else if (v === "kake") viewKake(); else if (v === "changes") await viewChanges(); else if (v === "mochi") await viewMochi(); else if (v === "export") viewExport(); else viewHome();
+    else if (v === "search") viewSearch(params); else if (v === "kake") viewKake(); else if (v === "changes") await viewChanges(); else if (v === "mochi") await viewMochi(); else if (v === "export") viewExport(); else if (v === "pdf") await viewPdf(params); else viewHome();
     window.scrollTo(0, 0);
   } catch (ex) { main().innerHTML = `<div class="note">表示できませんでした: ${esc(ex.message)}</div>`; }
 }
