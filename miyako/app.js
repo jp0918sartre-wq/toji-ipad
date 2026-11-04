@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-03";
+const APPVER = "2026-11-04";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -260,20 +260,24 @@ async function zipEntries(file) {
     x.start = x.lho + 30 + u16(lh, 26) + u16(lh, 28); x.blob = () => file.slice(x.start, x.start + x.csz, x.name.endsWith(".pdf") ? "application/pdf" : ""); }
   return out;
 }
-async function importBundle(file, say) {
+async function importBundle(file, prog) {
   const ents = await zipEntries(file), ix = ents.find(x => x.name === "index.json");
   if (!ix) throw new Error(`${file.name} はPDFの束ではありません`);
   const idx = JSON.parse(await ix.blob().text()); if (idx.format !== "miyako-ipad-pdf") throw new Error(`${file.name} はPDFの束ではありません`);
-  const info = (await kvGet("pdfinfo")) || {}; let n = 0, skip = 0;
+  const info = (await kvGet("pdfinfo")) || {}; let n = 0, skip = 0, k = 0; const N = idx.pdfs.length;
   for (const p of idx.pdfs) {
-    const ent = ents.find(x => x.name === `${p.id}.pdf`); if (!ent || ent.meth !== 0) continue;
-    const old = info[p.id]; if (old && old.made_at && old.made_at > idx.made_at && old.bundle !== "持ち出しファイル") { skip++; continue; }   // もっと新しい束で入れたもの
-    say(`${file.name}：${++n}／${idx.pdfs.length}　${p.relpath.split("\\").pop()}`);
+    k++; const ent = ents.find(x => x.name === `${p.id}.pdf`); if (!ent || ent.meth !== 0) continue;
+    const old = info[p.id];
+    // 同じ束で入れ終わっているもの・もっと新しい束で入れたものは飛ばす(途中で止まっても、選び直せば続きから)
+    if (old && PDFHAVE.has(p.id) && old.bundle !== "持ち出しファイル" && (old.bundle === idx.bundle || (old.made_at || "") > idx.made_at)) { skip++; prog(k, N, p, true); continue; }
+    prog(k, N, p, false);
     const T = tx("pdfs", "readwrite"); T.objectStore("pdfs").put({id: p.id, blob: ent.blob()}); await done(T);
-    info[p.id] = {root: p.root, relpath: p.relpath, pages: p.pages, size: p.size, mode: p.mode, bundle: idx.bundle, made_at: idx.made_at}; PDFHAVE.add(p.id);
-    if (n % 20 === 0) await kvSet("pdfinfo", info);
+    info[p.id] = {root: p.root, relpath: p.relpath, pages: p.pages, size: p.size, mode: p.mode, bundle: idx.bundle, made_at: idx.made_at}; PDFHAVE.add(p.id); n++;
+    if (n % 10 === 0) await kvSet("pdfinfo", info);
   }
-  await kvSet("pdfinfo", info); PDFINFO = info; return {n, skip};
+  await kvSet("pdfinfo", info); PDFINFO = info;
+  const bl = (await kvGet("bundles")) || {}; bl[idx.bundle] = {total: N, made_at: idx.made_at, done_at: nowStr()}; await kvSet("bundles", bl);
+  return {n, skip, name: idx.bundle};
 }
 const gbs = n => n >= 1e9 ? (n / 1e9).toFixed(1) + "GB" : (n / 1e6).toFixed(0) + "MB";
 async function viewPdf(params) {
@@ -281,13 +285,19 @@ async function viewPdf(params) {
   const all = new Map(); PDF.forEach((r, id) => all.set(id, {...r})); Object.entries(PDFINFO).forEach(([id, r]) => all.set(Number(id), {...(all.get(Number(id)) || {}), ...r}));
   const rows = [...all.entries()].filter(([id, r]) => (!only || PDFHAVE.has(id)) && (!q || q.split(/\s+/).every(t => (r.relpath || "").includes(t))))
     .sort((a, b) => (a[1].root || "").localeCompare(b[1].root || "") || (a[1].relpath || "").localeCompare(b[1].relpath || "", "ja"));
-  const bundles = {}; Object.values(PDFINFO).forEach(r => { if (PDFHAVE.size && r.bundle) { const b = bundles[r.bundle] = bundles[r.bundle] || {n: 0, size: 0, at: r.made_at}; b.n++; b.size += r.size || 0; } });
+  const bdone = (await kvGet("bundles")) || {};
   let est = ""; try { const e = await navigator.storage.estimate(); est = `このアプリが使っている量 ${gbs(e.usage || 0)}（使える量の目安 ${gbs(e.quota || 0)}）`; } catch (e) {}
   main().innerHTML = `<h2>PDF</h2><p class="lead">iPadに入れたPDFは、条の画面や下の一覧から頁を指定して開けます。持ち出しファイルを取り込み直しても消えません。</p>
-    <div class="card"><h3>PDFの束を入れる</h3><p>家のPCで「iPad用PDFを作る.bat」を動かすと、都名所アプリの「iPad用PDF」フォルダに <b>iPad用PDF_01.zip、_02.zip …</b> ができます。USBメモリなどでiPadの「ファイル」に移して、ここでまとめて選びます（いくつでも一度に選べます。もう入れた束をもう一度選んでもかまいません）。</p>
-      <div class="bar"><input type="file" id="f-b" accept=".zip,application/zip" multiple><button class="btn pri" id="b-b">入れる</button></div><p class="small" id="b-msg"></p>
+    <div class="card"><h3>PDFの束を入れる</h3>
+      <ol class="small" style="margin:0 0 10px;padding-left:20px;line-height:1.9">
+        <li>下の「ファイルを選択」を押し、USBの「iPad用PDF」フォルダを開く。</li>
+        <li>束（iPad用PDF_01.zip …）を<b>2〜3個ずつ</b>選んで「開く」。<br><span class="muted">iPadは選んだファイルを先に写し取るので、たくさん選ぶと、ここに名前が出るまで何分もかかります（その間は「ファイル未選択」のまま）。</span></li>
+        <li>下に選んだ束の名前が出たら「入れる」。終わったら、次の2〜3個を選ぶ。</li>
+      </ol>
+      <div class="bar"><input type="file" id="f-b" accept=".zip,application/zip" multiple><button class="btn pri" id="b-b" disabled>入れる</button></div>
+      <div id="b-sel"><p class="small muted">まだ選んでいません。</p></div><p class="small" id="b-msg"></p>
       <p class="small muted">入っているPDF ${fmt(PDFHAVE.size)} 個。${esc(est)}</p>
-      ${Object.keys(bundles).length ? `<table class="tb"><tr><th>束</th><th>PDF</th><th>大きさ</th><th>作った日</th></tr>${Object.entries(bundles).sort().map(([k, b]) => `<tr><td>${esc(k)}</td><td class="num">${fmt(b.n)}</td><td class="num">${gbs(b.size)}</td><td class="small">${esc(b.at || "")}</td></tr>`).join("")}</table>` : ""}</div>
+      ${Object.keys(bdone).length ? `<h4 style="margin-top:12px">入れ終わった束（${Object.keys(bdone).length} 個）</h4><table class="tb"><tr><th>束</th><th class="num">PDF</th><th>入れた日時</th></tr>${Object.entries(bdone).sort().map(([k, b]) => `<tr><td>${esc(k)}</td><td class="num">${fmt(b.total)}</td><td class="small">${esc(b.done_at || "")}</td></tr>`).join("")}</table>` : ""}</div>
     <div class="card"><h3>PDFの一覧</h3><div class="bar"><input id="q" value="${esc(q)}" placeholder="ファイル名・フォルダ名（例：京都叢書）"><button class="btn pri" id="b-q">絞る</button>
       <label class="small"><input type="checkbox" id="c-all" ${only ? "" : "checked"}> iPadに入っていないものも出す</label><span class="small">${fmt(rows.length)} 個</span></div>
       <table class="tb"><tr><th>ファイル</th><th>フォルダ</th><th class="num">頁</th><th class="num">大きさ</th><th></th></tr>
@@ -298,15 +308,31 @@ async function viewPdf(params) {
   const goQ = () => go("pdf?" + new URLSearchParams({q: $("#q").value, ...($("#c-all").checked ? {all: "1"} : {})}).toString());
   $("#b-q").addEventListener("click", goQ); $("#c-all").addEventListener("change", goQ); $("#q").addEventListener("keydown", e => { if (e.key === "Enter") goQ(); });
   main().querySelectorAll("tr.click[data-id]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.id), 1)));
+  const showSel = () => { const fs = [...$("#f-b").files].sort((a, b) => a.name.localeCompare(b.name)); $("#b-b").disabled = !fs.length;
+    $("#b-sel").innerHTML = fs.length ? `<table class="tb"><tr><th>選んだ束（${fs.length} 個）</th><th class="num">大きさ</th><th style="width:45%">ようす</th></tr>${fs.map((f, i) => `<tr><td>${esc(f.name)}${bdone[f.name] ? ` <span class="tag ok">前に入れた</span>` : ""}</td><td class="num">${gbs(f.size)}</td>
+      <td><div class="pbar"><div id="pb${i}"></div></div><span class="small" id="ps${i}">待っています</span></td></tr>`).join("")}</table>` : `<p class="small muted">まだ選んでいません。</p>`; return fs; };
+  $("#f-b").addEventListener("change", showSel);
   $("#b-b").addEventListener("click", async () => {
-    const fs = [...$("#f-b").files], msg = $("#b-msg"); if (!fs.length) { msg.textContent = "束（iPad用PDF_NN.zip）を選んでください。"; return; }
+    const fs = showSel(), msg = $("#b-msg"); if (!fs.length) return;
+    $("#b-b").disabled = true; $("#f-b").disabled = true;
     try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
-    let tn = 0, ts = 0;
-    for (const f of fs.sort((a, b) => a.name.localeCompare(b.name))) {
-      try { const r = await importBundle(f, t => msg.textContent = t); tn += r.n; ts += r.skip; }
-      catch (ex) { msg.textContent = `${f.name}：入れられませんでした（${ex.message}）`; if (/quota|space|容量/i.test(ex.message + ex.name)) { alert("iPadの空きが足りません。"); break; } return; }
+    let lock = null; try { lock = await navigator.wakeLock.request("screen"); } catch (e) {}   // 入れている間、画面が消えないように
+    msg.innerHTML = `<b>入れています。終わるまでこの画面のまま、ほかのアプリに切り替えないでください。</b>`;
+    let tn = 0, ts = 0, ok = 0;
+    for (const [i, f] of fs.entries()) {
+      const pb = $("#pb" + i), ps = $("#ps" + i); ps.textContent = "開いています…";
+      try {
+        const r = await importBundle(f, (k, N, p, sk) => { pb.style.width = (k / N * 100).toFixed(1) + "%"; ps.textContent = `${k}／${N}　${sk ? "（入っている）" : ""}${p.relpath.split("\\").pop()}`; });
+        tn += r.n; ts += r.skip; ok++; pb.style.width = "100%"; pb.classList.add("ok"); ps.textContent = `済み：${r.n} 個入れた${r.skip ? `・${r.skip} 個は入っていた` : ""}`;
+      } catch (ex) {
+        ps.innerHTML = `<span style="color:var(--bad)">入れられませんでした：${esc(ex.message)}</span>`;
+        if (/quota|space|容量/i.test(ex.message + ex.name)) { alert("iPadの空きが足りません。"); break; }
+      }
+      foot();
     }
-    foot(); await viewPdf(params); $("#b-msg").textContent = `入れました：PDF ${fmt(tn)} 個${ts ? `（新しいものが入っていたので飛ばした ${ts} 個）` : ""}。`;
+    try { lock && lock.release(); } catch (e) {}
+    msg.innerHTML = `<b style="color:var(--ok)">終わりました。</b>束 ${ok}／${fs.length} 個、PDF ${fmt(tn)} 個を入れました${ts ? `（${fmt(ts)} 個は入っていたので飛ばした）` : ""}。続けて次の束を選べます。`;
+    const keep = msg.innerHTML; await viewPdf(params); $("#b-msg").innerHTML = keep;
   });
 }
 

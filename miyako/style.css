@@ -262,3 +262,6 @@ table.tb tr[data-id]:hover,table.tb tr[data-go]:hover{background:var(--accent-so
 #pv-wrap{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;text-align:center;position:relative;padding:4px}
 #pv-c{background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.4)}
 .pv-msg{position:absolute;top:40%;left:0;right:0;color:#fff;text-align:center}
+.pbar{height:8px;background:#e6e9ee;border-radius:4px;overflow:hidden;margin:3px 0}
+.pbar>div{height:100%;width:0;background:var(--accent);transition:width .2s}
+.pbar>div.ok{background:var(--ok)}
