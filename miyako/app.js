@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-04";
+const APPVER = "2026-11-04b";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -289,12 +289,9 @@ async function viewPdf(params) {
   let est = ""; try { const e = await navigator.storage.estimate(); est = `このアプリが使っている量 ${gbs(e.usage || 0)}（使える量の目安 ${gbs(e.quota || 0)}）`; } catch (e) {}
   main().innerHTML = `<h2>PDF</h2><p class="lead">iPadに入れたPDFは、条の画面や下の一覧から頁を指定して開けます。持ち出しファイルを取り込み直しても消えません。</p>
     <div class="card"><h3>PDFの束を入れる</h3>
-      <ol class="small" style="margin:0 0 10px;padding-left:20px;line-height:1.9">
-        <li>下の「ファイルを選択」を押し、USBの「iPad用PDF」フォルダを開く。</li>
-        <li>束（iPad用PDF_01.zip …）を<b>2〜3個ずつ</b>選んで「開く」。<br><span class="muted">iPadは選んだファイルを先に写し取るので、たくさん選ぶと、ここに名前が出るまで何分もかかります（その間は「ファイル未選択」のまま）。</span></li>
-        <li>下に選んだ束の名前が出たら「入れる」。終わったら、次の2〜3個を選ぶ。</li>
-      </ol>
-      <div class="bar"><input type="file" id="f-b" accept=".zip,application/zip" multiple><button class="btn pri" id="b-b" disabled>入れる</button></div>
+      <p>「ファイルを選択」を押して、USBの束（iPad用PDF_01.zip …）を<b>1〜3個</b>選ぶと、<b>自動で入れ始めます</b>。終わったら次を選びます。</p>
+      <div class="bar"><input type="file" id="f-b" accept=".zip,application/zip" multiple></div>
+      <p class="small muted">選んでから名前が出るまで、1個あたり1分ほどかかることがあります（iPadがUSBから写し取るため）。</p>
       <div id="b-sel"><p class="small muted">まだ選んでいません。</p></div><p class="small" id="b-msg"></p>
       <p class="small muted">入っているPDF ${fmt(PDFHAVE.size)} 個。${esc(est)}</p>
       ${Object.keys(bdone).length ? `<h4 style="margin-top:12px">入れ終わった束（${Object.keys(bdone).length} 個）</h4><table class="tb"><tr><th>束</th><th class="num">PDF</th><th>入れた日時</th></tr>${Object.entries(bdone).sort().map(([k, b]) => `<tr><td>${esc(k)}</td><td class="num">${fmt(b.total)}</td><td class="small">${esc(b.done_at || "")}</td></tr>`).join("")}</table>` : ""}</div>
@@ -308,13 +305,12 @@ async function viewPdf(params) {
   const goQ = () => go("pdf?" + new URLSearchParams({q: $("#q").value, ...($("#c-all").checked ? {all: "1"} : {})}).toString());
   $("#b-q").addEventListener("click", goQ); $("#c-all").addEventListener("change", goQ); $("#q").addEventListener("keydown", e => { if (e.key === "Enter") goQ(); });
   main().querySelectorAll("tr.click[data-id]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.id), 1)));
-  const showSel = () => { const fs = [...$("#f-b").files].sort((a, b) => a.name.localeCompare(b.name)); $("#b-b").disabled = !fs.length;
+  const showSel = () => { const fs = [...$("#f-b").files].sort((a, b) => a.name.localeCompare(b.name));
     $("#b-sel").innerHTML = fs.length ? `<table class="tb"><tr><th>選んだ束（${fs.length} 個）</th><th class="num">大きさ</th><th style="width:45%">ようす</th></tr>${fs.map((f, i) => `<tr><td>${esc(f.name)}${bdone[f.name] ? ` <span class="tag ok">前に入れた</span>` : ""}</td><td class="num">${gbs(f.size)}</td>
       <td><div class="pbar"><div id="pb${i}"></div></div><span class="small" id="ps${i}">待っています</span></td></tr>`).join("")}</table>` : `<p class="small muted">まだ選んでいません。</p>`; return fs; };
-  $("#f-b").addEventListener("change", showSel);
-  $("#b-b").addEventListener("click", async () => {
+  $("#f-b").addEventListener("change", async () => {        // 選んだら自動で入れ始める(iPadでは選ぶ画面がボタンにかぶるため)
     const fs = showSel(), msg = $("#b-msg"); if (!fs.length) return;
-    $("#b-b").disabled = true; $("#f-b").disabled = true;
+    $("#f-b").disabled = true;
     try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
     let lock = null; try { lock = await navigator.wakeLock.request("screen"); } catch (e) {}   // 入れている間、画面が消えないように
     msg.innerHTML = `<b>入れています。終わるまでこの画面のまま、ほかのアプリに切り替えないでください。</b>`;
