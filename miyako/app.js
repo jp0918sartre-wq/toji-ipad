@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-04c";
+const APPVER = "2026-11-04d";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -444,5 +444,9 @@ document.querySelectorAll("nav a[data-view]").forEach(x => x.addEventListener("c
 window.addEventListener("hashchange", route);
 (async () => {
   IDB = await idbOpen(); await loadAll(); foot(); route();
-  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}).then(r => r.update()).catch(() => {});
+    // 新しい画面の仕組みが入ったら、1回だけ読み込み直して新しい画面にする
+    let re = false; navigator.serviceWorker.addEventListener("controllerchange", () => { if (!re) { re = true; location.reload(); } });
+  }
 })().catch(ex => { main().innerHTML = `<div class="note">読み込めませんでした: ${esc(ex.message)}</div>`; });
