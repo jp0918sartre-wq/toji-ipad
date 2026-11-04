@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-04d";
+const APPVER = "2026-11-04e";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -289,8 +289,8 @@ async function viewPdf(params) {
   let est = ""; try { const e = await navigator.storage.estimate(); est = `このアプリが使っている量 ${gbs(e.usage || 0)}（使える量の目安 ${gbs(e.quota || 0)}）`; } catch (e) {}
   main().innerHTML = `<h2>PDF</h2><p class="lead">iPadに入れたPDFは、条の画面や下の一覧から頁を指定して開けます。持ち出しファイルを取り込み直しても消えません。</p>
     <div class="card"><h3>PDFの束を入れる</h3>
-      <p>「ファイルを選択」を押して、USBの束（iPad用PDF_01.zip …）を<b>1〜3個</b>選ぶと、<b>自動で入れ始めます</b>。終わったら次を選びます。</p>
-      <div class="bar"><input type="file" id="f-b" accept=".zip,application/zip" multiple></div>
+      <p>「📂 束を選ぶ」を押して、USBの束（iPad用PDF_01.zip …）を<b>1〜3個</b>選ぶと、<b>自動で入れ始めます</b>。終わったら次を選びます。</p>
+      <div class="bar"><label for="f-b" class="btn pri big" id="l-b">📂 束を選ぶ</label><input type="file" id="f-b" multiple class="vh"></div>
       <p class="small muted">選んでから名前が出るまで、1個あたり1分ほどかかることがあります（iPadがUSBから写し取るため）。</p>
       <div id="b-sel"><p class="small muted">まだ選んでいません。</p></div><p class="small" id="b-msg"></p>
       <p class="small muted">入っているPDF ${fmt(PDFHAVE.size)} 個。${esc(est)}</p>
@@ -310,7 +310,8 @@ async function viewPdf(params) {
       <td><div class="pbar"><div id="pb${i}"></div></div><span class="small" id="ps${i}">待っています</span></td></tr>`).join("")}</table>` : `<p class="small muted">まだ選んでいません。</p>`; return fs; };
   $("#f-b").addEventListener("change", async () => {        // 選んだら自動で入れ始める(iPadでは選ぶ画面がボタンにかぶるため)
     const fs = showSel(), msg = $("#b-msg"); if (!fs.length) return;
-    $("#f-b").disabled = true; if ($("#ps0")) $("#ps0").textContent = "始めています…";
+    const bad = fs.filter(f => !/\.zip$/i.test(f.name)); if (bad.length) { msg.textContent = `zip ではないファイルが入っています（${bad.map(f => f.name).join("、")}）。iPad用PDF_NN.zip を選んでください。`; return; }
+    $("#f-b").disabled = true; $("#l-b").classList.add("off"); if ($("#ps0")) $("#ps0").textContent = "始めています…";
     // iPadへの頼みごと(取っておく・画面を消さない)は、返事を待たずに先へ進む(返事が来ないことがあるため)
     const soon = (pr, ms) => Promise.race([Promise.resolve(pr).catch(() => null), new Promise(r => setTimeout(() => r(null), ms))]);
     try { if (navigator.storage && navigator.storage.persist) soon(navigator.storage.persist(), 1500); } catch (e) {}
@@ -346,7 +347,7 @@ async function viewMochi() {
   main().innerHTML = `<h2>持ち出し・持ち帰り</h2>
     <div class="card"><h3>① 持ち出しファイルを取り込む</h3><p>家のPCの都名所アプリで作った「都名所_持ち出し_….zip」を選びます。iPadに入れたPDFは消えません。</p>
       ${META ? `<p class="small">いま入っているもの：${esc(META.exported_at)} に持ち出した分。取り込むと入れ替わります。</p>` : ""}
-      <div class="bar"><input type="file" id="f-in" accept=".zip,application/zip"><button class="btn pri" id="b-in">取り込む</button></div><p class="small" id="in-msg"></p></div>
+      <div class="bar"><input type="file" id="f-in"><button class="btn pri" id="b-in">取り込む</button></div><p class="small" id="in-msg"></p></div>
     <div class="card"><h3>② 持ち帰りファイルを作る</h3><p>このiPadで直したところ（${fmt(NCHG)} か所）を1つのファイルにします。家のPCの都名所アプリの「Excel・Wordに出力」→「持ち帰る」で取り込みます。</p>
       ${sent ? `<p class="small muted">前に作ったのは ${esc(sent)}</p>` : ""}<div class="bar"><button class="btn pri" id="b-out" ${NCHG ? "" : "disabled"}>持ち帰りファイルを作る</button><span class="small" id="out-msg"></span></div></div>
     <div class="card"><h3>この画面について</h3><p class="small">データはこのiPadの中にだけあり、インターネットには送りません。画面の仕組みだけを読み込みます。画面 ${APPVER}</p><button class="btn sm" id="b-upd">画面を新しくする（ネットのある所で）</button></div>`;

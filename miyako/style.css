@@ -265,3 +265,6 @@ table.tb tr[data-id]:hover,table.tb tr[data-go]:hover{background:var(--accent-so
 .pbar{height:8px;background:#e6e9ee;border-radius:4px;overflow:hidden;margin:3px 0}
 .pbar>div{height:100%;width:0;background:var(--accent);transition:width .2s}
 .pbar>div.ok{background:var(--ok)}
+.btn.big{font-size:18px;padding:12px 26px;border-radius:10px;display:inline-block}
+.btn.off{opacity:.4;pointer-events:none}
+.vh{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
