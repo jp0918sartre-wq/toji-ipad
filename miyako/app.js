@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-04b";
+const APPVER = "2026-11-04c";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -310,13 +310,15 @@ async function viewPdf(params) {
       <td><div class="pbar"><div id="pb${i}"></div></div><span class="small" id="ps${i}">待っています</span></td></tr>`).join("")}</table>` : `<p class="small muted">まだ選んでいません。</p>`; return fs; };
   $("#f-b").addEventListener("change", async () => {        // 選んだら自動で入れ始める(iPadでは選ぶ画面がボタンにかぶるため)
     const fs = showSel(), msg = $("#b-msg"); if (!fs.length) return;
-    $("#f-b").disabled = true;
-    try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
-    let lock = null; try { lock = await navigator.wakeLock.request("screen"); } catch (e) {}   // 入れている間、画面が消えないように
+    $("#f-b").disabled = true; if ($("#ps0")) $("#ps0").textContent = "始めています…";
+    // iPadへの頼みごと(取っておく・画面を消さない)は、返事を待たずに先へ進む(返事が来ないことがあるため)
+    const soon = (pr, ms) => Promise.race([Promise.resolve(pr).catch(() => null), new Promise(r => setTimeout(() => r(null), ms))]);
+    try { if (navigator.storage && navigator.storage.persist) soon(navigator.storage.persist(), 1500); } catch (e) {}
+    let lock = null; try { if (navigator.wakeLock) lock = await soon(navigator.wakeLock.request("screen"), 1500); } catch (e) {}
     msg.innerHTML = `<b>入れています。終わるまでこの画面のまま、ほかのアプリに切り替えないでください。</b>`;
     let tn = 0, ts = 0, ok = 0;
     for (const [i, f] of fs.entries()) {
-      const pb = $("#pb" + i), ps = $("#ps" + i); ps.textContent = "開いています…";
+      const pb = $("#pb" + i), ps = $("#ps" + i); ps.textContent = "束を開いています…";
       try {
         const r = await importBundle(f, (k, N, p, sk) => { pb.style.width = (k / N * 100).toFixed(1) + "%"; ps.textContent = `${k}／${N}　${sk ? "（入っている）" : ""}${p.relpath.split("\\").pop()}`; });
         tn += r.n; ts += r.skip; ok++; pb.style.width = "100%"; pb.classList.add("ok"); ps.textContent = `済み：${r.n} 個入れた${r.skip ? `・${r.skip} 個は入っていた` : ""}`;
