@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05b";
+const APPVER = "2026-11-05c";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -307,13 +307,13 @@ async function viewMochi() {
   main().innerHTML = `<h2>持ち出し・持ち帰り</h2>
     <div class="card"><h3>① 持ち出しファイルを取り込む</h3><p>家のPCの都名所アプリで作った「都名所_持ち出し_….zip」を選びます。iPadに入れたPDFは消えません。</p>
       ${META ? `<p class="small">いま入っているもの：${esc(META.exported_at)} に持ち出した分。取り込むと入れ替わります。</p>` : ""}
-      <div class="bar"><input type="file" id="f-in"><button class="btn pri" id="b-in">取り込む</button></div><p class="small" id="in-msg"></p></div>
+      <div class="bar"><label for="f-in" class="btn pri big">📂 持ち出しファイルを選ぶ</label><input type="file" id="f-in" class="vh"></div><p class="small muted">選ぶと自動で取り込みます。</p><p class="small" id="in-msg"></p></div>
     <div class="card"><h3>② 持ち帰りファイルを作る</h3><p>このiPadで直したところ（${fmt(NCHG)} か所）を1つのファイルにします。家のPCの都名所アプリの「Excel・Wordに出力」→「持ち帰る」で取り込みます。</p>
       ${sent ? `<p class="small muted">前に作ったのは ${esc(sent)}</p>` : ""}<div class="bar"><button class="btn pri" id="b-out" ${NCHG ? "" : "disabled"}>持ち帰りファイルを作る</button><span class="small" id="out-msg"></span></div></div>
     <div class="card"><h3>この画面について</h3><p class="small">データはこのiPadの中にだけあり、インターネットには送りません。画面の仕組みだけを読み込みます。画面 ${APPVER}</p><button class="btn sm" id="b-upd">画面を新しくする（ネットのある所で）</button></div>`;
   $("#b-upd").addEventListener("click", async () => { if (navigator.serviceWorker) { const r = await navigator.serviceWorker.getRegistration(); if (r) await r.update(); } location.reload(); });
-  $("#b-in").addEventListener("click", async () => {
-    const f = $("#f-in").files[0], msg = $("#in-msg"); if (!f) { msg.textContent = "ファイルを選んでください。"; return; }
+  $("#f-in").addEventListener("change", async () => {          // 選んだら自動で取り込む(iPadでは選ぶ画面がボタンにかぶるため)
+    const f = $("#f-in").files[0], msg = $("#in-msg"); if (!f) return; msg.textContent = "取り込んでいます…";
     if (NCHG && !(sent && (await kvGet("sent_n")) === NCHG) && !confirm(`このiPadで直したところが ${NCHG} か所あり、まだ持ち帰りファイルにしていません。取り込むと消えます。取り込みますか？`)) return;
     try { await importZip(f, t => msg.textContent = t); await loadAll(); foot(); msg.textContent = "取り込みました。"; } catch (ex) { msg.textContent = "取り込めませんでした：" + ex.message; }
   });
