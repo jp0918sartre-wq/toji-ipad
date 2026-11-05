@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05t";
+const APPVER = "2026-11-05u";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -233,6 +233,14 @@ function viewMeisho(id) {
 }
 
 // ------------------------------------------------------------ 条(翻刻などを打つ)
+// この条がPDFの何頁か(ショートカットで開いたPDFは頁を指定できないので、大きく出してめくってもらう)
+function pageHint(a, pdfs) {
+  const first = parseInt(String(a.page || "").match(/\d+/)?.[0] || "", 10);
+  const lines = pdfs.map(p => { const r = PDF.get(p) || {};
+    const pg = a.pdf_id === p && a.pdf_page ? Number(a.pdf_page) : (!isNaN(first) && r.offset != null && r.offset !== "" ? first + Number(r.offset) : null);
+    return `<div><b>${esc(pdfName(p))}</b>：${pg ? `<span class="pgbig">PDFの ${pg} 頁</span>` : `<span class="muted">PDFの頁はまだ決まっていない</span>`}</div>`; });
+  return `<div class="small">この条：${a.page ? `叢書の <b>${esc(a.page)}</b> 頁` : "叢書の頁なし"}${a.maki ? `（${esc(a.maki)}）` : ""}</div>` + lines.join("");
+}
 function viewAp(id) {
   if (need()) return;
   const a = D.appear.get(id); if (!a) { main().innerHTML = "<p>ありません。</p>"; return; }
@@ -243,7 +251,8 @@ function viewAp(id) {
   main().innerHTML = `${back("meisho/" + a.meisho_id)}<div class="bar"><h2 style="margin:0">${esc(m.name)}　／　${esc(b.title || "")}　<span class="small">${b.year || ""}</span></h2><span style="flex:1"></span>
       ${k > 0 ? `<button class="btn" onclick="go('ap/${sib[k - 1]}')">◀ 前の条</button>` : ""}<span class="small">${k + 1}／${sib.length}</span>${k < sib.length - 1 ? `<button class="btn" onclick="go('ap/${sib[k + 1]}')">次の条 ▶</button>` : ""}</div>
     <p class="small muted">${esc(a.heading || "")}</p>
-    ${pdfs.length ? `<div class="card"><div class="bar"><b>PDF</b>${pdfs.map(p => pdfBtn(p)).join("")}<span class="small">頁</span><input id="pg" type="number" value="${a.pdf_page || 1}" style="width:70px"></div></div>` : (a.book_id != null ? `<div class="card"><div class="bar"><b>PDF</b><span class="small muted">この条の本に結んだPDFはありません。</span><button class="btn pri" id="b-choose">＋ 一覧から選んで結ぶ</button><label for="f-link" class="btn">📂 USBから選んで結ぶ</label><input type="file" id="f-link" class="vh"><span class="small" id="link-msg"></span></div></div>` : `<p class="small muted">この条は本が決まっていないので、PDFを結べません（下の「本」を選んで保存）。</p>`)}
+    ${pdfs.length ? `<div class="card"><div class="bar"><b>PDF</b>${pdfs.map(p => pdfBtn(p)).join("")}<span class="small">頁</span><input id="pg" type="number" value="${a.pdf_page || 1}" style="width:70px"></div>
+      <div class="pagehint">${pageHint(a, pdfs)}</div></div>` : (a.book_id != null ? `<div class="card"><div class="bar"><b>PDF</b><span class="small muted">この条の本に結んだPDFはありません。</span><button class="btn pri" id="b-choose">＋ 一覧から選んで結ぶ</button><label for="f-link" class="btn">📂 USBから選んで結ぶ</label><input type="file" id="f-link" class="vh"><span class="small" id="link-msg"></span></div></div>` : `<p class="small muted">この条は本が決まっていないので、PDFを結べません（下の「本」を選んで保存）。</p>`)}
     <div class="card form">
       <div class="row"><label>本</label><div><select id="book" style="width:100%"><option value="">（選ぶ）</option>${books.map(x => `<option value="${x.id}" ${x.id === a.book_id ? "selected" : ""}>${x.year || "????"}　${esc(x.title)}</option>`).join("")}</select></div></div>
       ${AP_F.map(([f, l]) => `<div class="row"><label>${l}</label><div><input data-a="${f}" value="${esc(a[f] || "")}" style="width:100%"></div></div>`).join("")}
