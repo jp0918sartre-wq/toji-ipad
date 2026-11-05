@@ -201,8 +201,11 @@ dl.kv dd{margin:0;white-space:pre-wrap;word-break:break-word}
 @media (max-width:760px){
   #app{flex-direction:column}
   aside{display:block !important;width:auto !important;height:auto;position:sticky;top:0;z-index:20}
-  aside h1,aside .sub,aside .foot{display:none}
-  aside nav{display:flex;overflow-x:auto;white-space:nowrap}
+  aside h1,aside .sub{display:none}
+  aside .foot{padding:2px 12px 6px;font-size:10px}
+  aside .foot br{display:none}
+  aside nav{display:flex;flex-wrap:wrap;white-space:nowrap;flex:none}
+  aside{height:auto !important}   /* 折り返して、メニューが全部見えるように(2026-11-05) */
   aside nav .grp{display:none}
   aside nav a{flex:none;border-left:none !important;padding:10px 12px}
 }
