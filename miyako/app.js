@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05i";
+const APPVER = "2026-11-05j";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -250,18 +250,23 @@ const bookPdfs = id => BOOKPDF.filter(x => x.book_id === id).map(x => x.pdf_id).
 const bookUsb = id => { const ps = bookPdfs(id); return {n: ps.length, ok: ps.filter(p => ipadPath(p)).length}; };
 function viewBooks(params) {
   if (need()) return;
-  const q = new URLSearchParams(params || "").get("q") || "";
+  const sp = new URLSearchParams(params || ""), q = sp.get("q") || "", lk = sp.get("lk") || "";
   // 書名・よみ・著者・版元・刊年・叢書と巻・メモ・結んだPDFのファイル名で探す(空白で区切ると、すべてを含むもの)
   const hay = b => [b.title, b.yomi, b.author, b.publisher, b.year, b.wareki, b.genre, b.sosho, b.sosho ? b.sosho + (b.sosho_kan || "") : "", b.memo, ...bookPdfs(b.id).map(pdfName)].join(" ").normalize("NFKC");
   const ts = q.normalize("NFKC").split(/\s+/).filter(Boolean);
-  const rows = [...D.book.values()].filter(b => { if (!ts.length) return true; const h = hay(b); return ts.every(t => h.includes(t)); }).sort((a, b) => (a.year || 9999) - (b.year || 9999));
-  main().innerHTML = `<h2>本の台帳</h2><div class="card"><div class="bar"><input id="q" type="search" enterkeyhint="search" autocomplete="off" value="${esc(q)}" placeholder="書名・著者・叢書・PDFの名前（例：新撰京都叢書1）"><button class="btn pri" id="b-q">絞る</button><span class="small">${rows.length} 冊</span><span style="flex:1"></span><button class="btn" id="b-new">＋ 本を足す</button></div>
-    <p class="small muted">「USB」：その本のPDFがUSB（外で読む用の写し）に入っているか。</p>
-    <table class="tb"><tr><th>刊年</th><th>書名</th><th>著者</th><th>種類</th><th>叢書</th><th>USB</th></tr>${rows.map(b => { const u = bookUsb(b.id); return `<tr class="click" data-id="${b.id}"><td>${b.year || ""}</td><td><b>${esc(b.title)}</b>${b.id < 0 ? ` <span class="tag acc">iPadで足した</span>` : ""}</td><td class="small">${esc(b.author || "")}</td><td class="small">${esc(b.genre || "")}</td><td class="small">${esc(b.sosho || "")} ${esc(b.sosho_kan || "")}</td>
-      <td>${u.n ? (u.ok === u.n ? `<span class="tag ok">あり</span>` : `<span class="tag warn">${u.ok}／${u.n}</span>`) : `<span class="small muted">PDFなし</span>`}</td></tr>`; }).join("")}</table></div>`;
+  const rows = [...D.book.values()].filter(b => { const n = bookPdfs(b.id).length; if (lk === "yes" && !n) return false; if (lk === "no" && n) return false;
+    if (!ts.length) return true; const h = hay(b); return ts.every(t => h.includes(t)); }).sort((a, b) => (a.year || 9999) - (b.year || 9999));
+  const nYes = [...D.book.values()].filter(b => bookPdfs(b.id).length).length;
+  main().innerHTML = `<h2>本の台帳</h2><div class="card"><div class="bar"><input id="q" type="search" enterkeyhint="search" autocomplete="off" value="${esc(q)}" placeholder="書名・著者・叢書・PDFの名前（例：新撰京都叢書1）"><button class="btn pri" id="b-q">絞る</button><span style="flex:1"></span><button class="btn" id="b-new">＋ 本を足す</button></div>
+    <div class="seg">${[["", `すべて（${D.book.size}）`], ["yes", `PDFを結んだ本（${nYes}）`], ["no", `PDFがまだの本（${D.book.size - nYes}）`]].map(([k, l]) => `<button class="${lk === k ? "on" : ""}" data-lk="${k}">${l}</button>`).join("")}</div>
+    <p class="small">${rows.length} 冊${q ? `（「${esc(q)}」で絞った）` : ""}</p>
+    <table class="tb"><tr><th>刊年</th><th>書名</th><th>叢書</th><th style="width:34%">PDF</th></tr>${rows.map(b => { const ps = bookPdfs(b.id);
+      return `<tr class="click" data-id="${b.id}"><td>${b.year || ""}</td><td><b>${esc(b.title)}</b>${b.id < 0 ? ` <span class="tag acc">iPadで足した</span>` : ""}<div class="small">${esc(b.author || "")}</div></td><td class="small">${esc(b.sosho || "")} ${esc(b.sosho_kan || "")}</td>
+      <td>${ps.length ? `<span class="pdfst yes">PDF：結んだ ${ps.length}</span><div class="small">${ps.slice(0, 3).map(p => esc(pdfName(p))).join("<br>")}${ps.length > 3 ? "<br>…" : ""}</div>` : `<span class="pdfst no">PDF：まだ</span>`}</td></tr>`; }).join("")}</table></div>`;
+  main().querySelectorAll("[data-lk]").forEach(e => e.addEventListener("click", () => go("books?" + new URLSearchParams({q: $("#q").value, lk: e.dataset.lk}).toString())));
   $("#b-new").addEventListener("click", async () => { const i = await newId("book"); await saveRow("book", i, {title: "（新しい本）"}, {title: "書名"}); go("book/" + i); });
-  $("#b-q").addEventListener("click", () => go("books?q=" + encodeURIComponent($("#q").value)));
-  $("#q").addEventListener("keydown", e => { if (e.key === "Enter") go("books?q=" + encodeURIComponent($("#q").value)); });
+  const goB = () => go("books?" + new URLSearchParams({q: $("#q").value, lk}).toString());
+  $("#b-q").addEventListener("click", goB); $("#q").addEventListener("keydown", e => { if (e.key === "Enter") goB(); });
   main().querySelectorAll("tr[data-id]").forEach(e => e.addEventListener("click", () => go("book/" + e.dataset.id)));
 }
 function viewBook(id) {

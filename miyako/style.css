@@ -283,3 +283,12 @@ aside .foot{color:#fff !important;font-size:14px !important;line-height:1.7 !imp
 .ver{display:inline-block;margin-top:6px;background:#fff;color:#1b2836;font-weight:700;font-size:14px;padding:2px 10px;border-radius:6px}
 /* 検索欄を大きく(2026-11-05) */
 input#q{font-size:17px;padding:8px 12px;min-width:260px;border:2px solid #8a93a1;border-radius:8px;background:#fff;-webkit-appearance:none;appearance:none}
+/* 本の台帳：PDFを結んだか(2026-11-05) */
+.pdfst{display:inline-block;font-size:14px;font-weight:700;padding:3px 10px;border-radius:6px;margin-bottom:3px}
+.pdfst.yes{background:#2e7d55;color:#fff}
+.pdfst.no{background:#fff3df;color:#9a5a00;border:1.5px solid #e0a040}
+.seg{display:flex;gap:0;margin:4px 0 6px;flex-wrap:wrap}
+.seg button{font-size:15px;padding:8px 14px;border:1.5px solid #1f5f8b;background:#fff;color:#1f5f8b;cursor:pointer}
+.seg button:first-child{border-radius:8px 0 0 8px}.seg button:last-child{border-radius:0 8px 8px 0}
+.seg button+button{border-left:none}
+.seg button.on{background:#1f5f8b;color:#fff}
