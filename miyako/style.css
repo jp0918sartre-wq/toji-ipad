@@ -294,3 +294,9 @@ input#q{font-size:17px;padding:8px 12px;min-width:260px;border:2px solid #8a93a1
 .seg button.on{background:#1f5f8b;color:#fff}
 .pdfrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 0;border-bottom:1px solid #eef0f4}
 .btn.danger{border-color:#b3352c;color:#b3352c}
+.chooser{max-width:900px;max-height:calc(100vh - 90px);overflow:auto}
+.chooser input#cq{font-size:17px;padding:8px 12px;min-width:320px;border:2px solid #8a93a1;border-radius:8px}
+.cq-row{padding:10px 12px;border-bottom:1px solid #e2e5ea;cursor:pointer}
+.cq-row:active,.cq-row:hover{background:#eef5fb}
+.cq-row.linked{background:#eaf4ee}
+.cq-nm{font-size:17px;font-weight:700;word-break:break-all}
