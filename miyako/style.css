@@ -268,3 +268,5 @@ table.tb tr[data-id]:hover,table.tb tr[data-go]:hover{background:var(--accent-so
 .btn.big{font-size:18px;padding:12px 26px;border-radius:10px;display:inline-block}
 .btn.off{opacity:.4;pointer-events:none}
 .vh{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.ask{background:#fff;margin:calc(60px + env(safe-area-inset-top)) auto 0;max-width:640px;border-radius:12px;padding:24px 26px;line-height:1.8}
+.ask-name{font-size:18px;font-weight:700;margin:6px 0 10px;word-break:break-all}

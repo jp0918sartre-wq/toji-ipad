@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-04e";
+const APPVER = "2026-11-05";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -49,8 +49,10 @@ const book = id => D.book.get(id) || {};
 const apYear = a => book(a.book_id).year;
 const byYear = (a, b) => (apYear(a) || 9999) - (apYear(b) || 9999) || (a.sort || 0) - (b.sort || 0);
 
-// ------------------------------------------------------------ PDF(iPadに入れた分。重ねて開く。頁を指定して開く)
-// PDFは IndexedDB の pdfs に {id, blob}。PDFINFO(kv "pdfinfo")に {id: {root, relpath, pages, size, bundle, made_at}}。
+// ------------------------------------------------------------ PDF(重ねて開く。頁を指定して開く)
+// 軽いPDFは、iPadの「ファイル」(このiPad内 › 都名所PDF › …)に、PCと同じフォルダ分けで置いてある(PCの ipad_pdf.py が作る)。
+// 都名所は、初めて開くPDFだけ「ファイル」から選んでもらい、IndexedDB の pdfs に {id, blob} で覚える(2回目からはすぐ開く)。
+// PDFINFO(kv "pdfinfo")に {id: {root, relpath, size, at}}。
 // 表示は pdf.js。PDFをまるごと読み込まず、要る所だけ Blob から切り出して読む(大きいPDFでもメモリを食わない)。
 const pdfName = id => ((PDF.get(id) || PDFINFO[id] || {}).relpath || String(id)).split("\\").pop();
 function loadPdfjs() {
@@ -58,9 +60,30 @@ function loadPdfjs() {
     s.onload = () => { pdfjsLib.GlobalWorkerOptions.workerSrc = "lib/pdfjs/pdf.worker.min.js"; ok(); }; s.onerror = () => ng(new Error("PDFを見る部品を読めませんでした")); document.head.append(s); });
 }
 const PV = {doc: null, id: null, page: 1, zoom: 1, task: null, rot: 0};
+const ipadPath = id => ((PDF.get(id) || {}).ipad_path || "");
+// まだ覚えていないPDF:「ファイル」のどこにあるかを出して、選んでもらう
+function askPdf(id, page) {
+  const ip = ipadPath(id), parts = ip.split("/"), nm = pdfName(id);
+  $("#ov-body").innerHTML = `<div class="ask"><h3>このPDFを「ファイル」から選んでください（初めての1回だけ）</h3>
+    <p class="ask-name">${esc(nm)}</p>
+    ${ip ? `<p>場所：<b>ファイル › このiPad内 › ${parts.slice(0, -1).map(esc).join(" › ")}</b></p>` : `<p class="muted">（このPDFのiPadでの場所が分かりません。PCで「iPad用PDFを作る」を動かしたあとの持ち出しファイルを取り込むと出ます）</p>`}
+    <label for="f-ask" class="btn pri big">📂 ファイルから選ぶ</label><input type="file" id="f-ask" class="vh">
+    <p class="small" id="ask-msg">選ぶと、都名所が覚えて、次からはすぐ開きます。</p></div>`;
+  $("#ov").hidden = false;
+  $("#f-ask").addEventListener("change", async () => {
+    const f = $("#f-ask").files[0]; if (!f) return;
+    if (f.name.normalize() !== nm.normalize() && !confirm(`選んだのは「${f.name}」です。探しているのは「${nm}」です。このまま開きますか？`)) return;
+    $("#ask-msg").textContent = "覚えています…（大きいPDFは少しかかります）";
+    try {
+      const T = tx("pdfs", "readwrite"); T.objectStore("pdfs").put({id, blob: f}); await done(T);
+      PDFHAVE.add(id); const info = (await kvGet("pdfinfo")) || {}; info[id] = {root: (PDF.get(id) || {}).root, relpath: (PDF.get(id) || {}).relpath, size: f.size, at: nowStr()}; await kvSet("pdfinfo", info); PDFINFO = info; foot();
+    } catch (ex) { $("#ask-msg").textContent = "覚えられませんでした（" + ex.message + "）。iPadの空きを確かめてください。"; return; }
+    openPdf(id, page);
+  });
+}
 async function openPdf(id, page) {
   const r = await req(tx("pdfs").objectStore("pdfs").get(id));
-  if (!r) { alert("このPDFはまだiPadに入っていません。「PDF」の画面で、PCで作ったPDFの束を入れてください。"); return; }
+  if (!r) return askPdf(id, page);
   await loadPdfjs();
   if (PV.doc && PV.id !== id) { try { PV.doc.destroy(); } catch (e) {} PV.doc = null; }
   $("#ov-body").innerHTML = `<div class="pv-bar"><button class="btn" id="pv-p">◀ 前</button><input id="pv-n" type="number" min="1" value="${page || 1}"><span id="pv-t" class="pv-t"></span><button class="btn" id="pv-nx">次 ▶</button>
@@ -142,7 +165,7 @@ function viewMeisho(id) {
     <div class="card"><div class="bar"><b>出てくる所</b><span style="flex:1"></span><button class="btn pri" id="b-cmp">引き比べる</button><button class="btn" id="b-new">条を足す</button><button class="btn" id="b-w">Wordで</button></div>
     <table class="tb"><tr><th></th><th>刊年</th><th>書名</th><th>巻・項</th><th>頁</th><th></th></tr>
     ${aps.map(a => { const b = book(a.book_id); return `<tr class="click" data-id="${a.id}"><td><input type="checkbox" data-c="${a.id}"></td><td>${b.year || ""}</td><td><b>${esc(b.title || "（本なし）")}</b></td><td class="small">${esc(a.maki || "")}</td><td class="small">${esc(a.page || "")}</td>
-      <td>${a.honkoku ? `<span class="tag acc">翻刻</span>` : ""}${a.checked === "1" ? `<span class="tag ok">確かめた</span>` : ""}${a.pdf_id && PDFHAVE.has(a.pdf_id) ? `<span class="tag">PDF</span>` : ""}</td></tr>`; }).join("")}</table></div><div id="cmpbox"></div>`;
+      <td>${a.honkoku ? `<span class="tag acc">翻刻</span>` : ""}${a.checked === "1" ? `<span class="tag ok">確かめた</span>` : ""}${a.pdf_id && PDF.has(a.pdf_id) ? `<span class="tag">PDF</span>` : ""}</td></tr>`; }).join("")}</table></div><div id="cmpbox"></div>`;
   main().querySelectorAll("[data-c]").forEach(e => e.addEventListener("click", ev => ev.stopPropagation()));
   main().querySelectorAll("tr[data-id]").forEach(e => e.addEventListener("click", () => go("ap/" + e.dataset.id)));
   $("#b-cmp").addEventListener("click", () => {
@@ -162,12 +185,12 @@ function viewAp(id) {
   const a = D.appear.get(id); if (!a) { main().innerHTML = "<p>ありません。</p>"; return; }
   const b = book(a.book_id), m = D.meisho.get(a.meisho_id) || {};
   const sib = [...D.appear.values()].filter(x => x.meisho_id === a.meisho_id).sort(byYear).map(x => x.id); const k = sib.indexOf(id);
-  const pdfs = BOOKPDF.filter(x => x.book_id === a.book_id).map(x => x.pdf_id).concat(a.pdf_id ? [a.pdf_id] : []).filter((v, i, s) => s.indexOf(v) === i && PDFHAVE.has(v));
+  const pdfs = BOOKPDF.filter(x => x.book_id === a.book_id).map(x => x.pdf_id).concat(a.pdf_id ? [a.pdf_id] : []).filter((v, i, s) => s.indexOf(v) === i && PDF.has(v));
   const books = [...D.book.values()].sort((x, y) => (x.year || 9999) - (y.year || 9999));
   main().innerHTML = `${back("meisho/" + a.meisho_id)}<div class="bar"><h2 style="margin:0">${esc(m.name)}　／　${esc(b.title || "")}　<span class="small">${b.year || ""}</span></h2><span style="flex:1"></span>
       ${k > 0 ? `<button class="btn" onclick="go('ap/${sib[k - 1]}')">◀ 前の条</button>` : ""}<span class="small">${k + 1}／${sib.length}</span>${k < sib.length - 1 ? `<button class="btn" onclick="go('ap/${sib[k + 1]}')">次の条 ▶</button>` : ""}</div>
     <p class="small muted">${esc(a.heading || "")}</p>
-    ${pdfs.length ? `<div class="card"><div class="bar"><b>PDF</b>${pdfs.map(p => `<button class="btn sm" data-pdf="${p}">${esc(pdfName(p))}</button>`).join("")}<span class="small">頁</span><input id="pg" type="number" value="${a.pdf_page || 1}" style="width:70px"></div></div>` : `<p class="small muted">この条のPDFはまだiPadに入っていません（「PDF」の画面でPDFの束を入れる）。</p>`}
+    ${pdfs.length ? `<div class="card"><div class="bar"><b>PDF</b>${pdfs.map(p => `<button class="btn sm" data-pdf="${p}">${PDFHAVE.has(p) ? "" : "📂 "}${esc(pdfName(p))}</button>`).join("")}<span class="small">頁</span><input id="pg" type="number" value="${a.pdf_page || 1}" style="width:70px"></div></div>` : `<p class="small muted">この条に結んだPDFはありません。</p>`}
     <div class="card form">
       <div class="row"><label>本</label><div><select id="book" style="width:100%"><option value="">（選ぶ）</option>${books.map(x => `<option value="${x.id}" ${x.id === a.book_id ? "selected" : ""}>${x.year || "????"}　${esc(x.title)}</option>`).join("")}</select></div></div>
       ${AP_F.map(([f, l]) => `<div class="row"><label>${l}</label><div><input data-a="${f}" value="${esc(a[f] || "")}" style="width:100%"></div></div>`).join("")}
@@ -243,96 +266,33 @@ async function viewChanges() {
     ${ch.slice().reverse().map(x => `<tr><td class="small">${esc(x.at)}</td><td class="small">${esc(x.tbl)} ${x.id}</td><td>${esc(x.label)}</td><td class="small">${esc(x.old.slice(0, 50))}</td><td class="small">${esc(x.new.slice(0, 50))}</td></tr>`).join("") || "<tr><td>まだありません。</td></tr>"}</table></div>`;
 }
 
-// ------------------------------------------------------------ PDF(PCの「iPad用PDFを作る.bat」で作った束を入れる・一覧から開く)
-// 束 = 圧縮しない zip(index.json と <id>.pdf)。zip をまるごと読まず、Blob を切り出してそのまま入れる(2GBの束でもメモリを食わない)。
-const u16 = (v, o) => v.getUint16(o, true), u32 = (v, o) => v.getUint32(o, true);
-async function zipEntries(file) {
-  const tail = Math.min(file.size, 65557 + 22), tb = new DataView(await file.slice(file.size - tail).arrayBuffer());
-  let e = -1; for (let i = tail - 22; i >= 0; i--) if (u32(tb, i) === 0x06054b50) { e = i; break; }
-  if (e < 0) throw new Error("zip ではありません");
-  const cdSize = u32(tb, e + 12), cdOff = u32(tb, e + 16);
-  const cd = new DataView(await file.slice(cdOff, cdOff + cdSize).arrayBuffer()); const dec = new TextDecoder("utf-8"); const out = [];
-  for (let o = 0; o + 46 <= cdSize && u32(cd, o) === 0x02014b50;) {
-    const meth = u16(cd, o + 10), csz = u32(cd, o + 20), nl = u16(cd, o + 28), xl = u16(cd, o + 30), cl = u16(cd, o + 32), lho = u32(cd, o + 42);
-    out.push({name: dec.decode(new Uint8Array(cd.buffer, o + 46, nl)), meth, csz, lho}); o += 46 + nl + xl + cl;
-  }
-  for (const x of out) { const lh = new DataView(await file.slice(x.lho, x.lho + 30).arrayBuffer()); if (u32(lh, 0) !== 0x04034b50) throw new Error("zip が壊れています");
-    x.start = x.lho + 30 + u16(lh, 26) + u16(lh, 28); x.blob = () => file.slice(x.start, x.start + x.csz, x.name.endsWith(".pdf") ? "application/pdf" : ""); }
-  return out;
-}
-async function importBundle(file, prog) {
-  const ents = await zipEntries(file), ix = ents.find(x => x.name === "index.json");
-  if (!ix) throw new Error(`${file.name} はPDFの束ではありません`);
-  const idx = JSON.parse(await ix.blob().text()); if (idx.format !== "miyako-ipad-pdf") throw new Error(`${file.name} はPDFの束ではありません`);
-  const info = (await kvGet("pdfinfo")) || {}; let n = 0, skip = 0, k = 0; const N = idx.pdfs.length;
-  for (const p of idx.pdfs) {
-    k++; const ent = ents.find(x => x.name === `${p.id}.pdf`); if (!ent || ent.meth !== 0) continue;
-    const old = info[p.id];
-    // 同じ束で入れ終わっているもの・もっと新しい束で入れたものは飛ばす(途中で止まっても、選び直せば続きから)
-    if (old && PDFHAVE.has(p.id) && old.bundle !== "持ち出しファイル" && (old.bundle === idx.bundle || (old.made_at || "") > idx.made_at)) { skip++; prog(k, N, p, true); continue; }
-    prog(k, N, p, false);
-    const T = tx("pdfs", "readwrite"); T.objectStore("pdfs").put({id: p.id, blob: ent.blob()}); await done(T);
-    info[p.id] = {root: p.root, relpath: p.relpath, pages: p.pages, size: p.size, mode: p.mode, bundle: idx.bundle, made_at: idx.made_at}; PDFHAVE.add(p.id); n++;
-    if (n % 10 === 0) await kvSet("pdfinfo", info);
-  }
-  await kvSet("pdfinfo", info); PDFINFO = info;
-  const bl = (await kvGet("bundles")) || {}; bl[idx.bundle] = {total: N, made_at: idx.made_at, done_at: nowStr()}; await kvSet("bundles", bl);
-  return {n, skip, name: idx.bundle};
-}
+// ------------------------------------------------------------ PDFの一覧(どのPDFが「ファイル」のどこにあるか・覚えたPDF)
 const gbs = n => n >= 1e9 ? (n / 1e9).toFixed(1) + "GB" : (n / 1e6).toFixed(0) + "MB";
 async function viewPdf(params) {
-  const sp = new URLSearchParams(params || ""), q = sp.get("q") || "", only = sp.get("all") ? "" : "1";
-  const all = new Map(); PDF.forEach((r, id) => all.set(id, {...r})); Object.entries(PDFINFO).forEach(([id, r]) => all.set(Number(id), {...(all.get(Number(id)) || {}), ...r}));
-  const rows = [...all.entries()].filter(([id, r]) => (!only || PDFHAVE.has(id)) && (!q || q.split(/\s+/).every(t => (r.relpath || "").includes(t))))
+  const sp = new URLSearchParams(params || ""), q = sp.get("q") || "", mine = sp.get("mine") === "1";
+  const rows = [...PDF.entries()].filter(([id, r]) => (!mine || PDFHAVE.has(id)) && (!q || q.split(/\s+/).every(t => (r.relpath || "").includes(t))))
     .sort((a, b) => (a[1].root || "").localeCompare(b[1].root || "") || (a[1].relpath || "").localeCompare(b[1].relpath || "", "ja"));
-  const bdone = (await kvGet("bundles")) || {};
-  let est = ""; try { const e = await navigator.storage.estimate(); est = `このアプリが使っている量 ${gbs(e.usage || 0)}（使える量の目安 ${gbs(e.quota || 0)}）`; } catch (e) {}
-  main().innerHTML = `<h2>PDF</h2><p class="lead">iPadに入れたPDFは、条の画面や下の一覧から頁を指定して開けます。持ち出しファイルを取り込み直しても消えません。</p>
-    <div class="card"><h3>PDFの束を入れる</h3>
-      <p>「📂 束を選ぶ」を押して、USBの束（iPad用PDF_01.zip …）を<b>1〜3個</b>選ぶと、<b>自動で入れ始めます</b>。終わったら次を選びます。</p>
-      <div class="bar"><label for="f-b" class="btn pri big" id="l-b">📂 束を選ぶ</label><input type="file" id="f-b" multiple class="vh"></div>
-      <p class="small muted">選んでから名前が出るまで、1個あたり1分ほどかかることがあります（iPadがUSBから写し取るため）。</p>
-      <div id="b-sel"><p class="small muted">まだ選んでいません。</p></div><p class="small" id="b-msg"></p>
-      <p class="small muted">入っているPDF ${fmt(PDFHAVE.size)} 個。${esc(est)}</p>
-      ${Object.keys(bdone).length ? `<h4 style="margin-top:12px">入れ終わった束（${Object.keys(bdone).length} 個）</h4><table class="tb"><tr><th>束</th><th class="num">PDF</th><th>入れた日時</th></tr>${Object.entries(bdone).sort().map(([k, b]) => `<tr><td>${esc(k)}</td><td class="num">${fmt(b.total)}</td><td class="small">${esc(b.done_at || "")}</td></tr>`).join("")}</table>` : ""}</div>
+  const memo = Object.entries(PDFINFO).filter(([id]) => PDFHAVE.has(Number(id))); const memoSize = memo.reduce((x, [, v]) => x + (v.size || 0), 0);
+  const noPath = [...PDF.values()].filter(r => !r.ipad_path).length;
+  main().innerHTML = `<h2>PDF</h2>
+    <div class="card"><h3>しくみ</h3>
+      <p>軽くしたPDFは、iPadの「ファイル」の <b>このiPad内 › 都名所PDF</b> に、PCと同じフォルダ分け・同じ名前で置いておきます（USBからフォルダごとコピー）。<br>
+      条の画面や下の一覧でPDFを押すと、<b>初めての1回だけ</b>「ファイル」から選ぶ画面になります。選ぶと都名所が覚えて、次からは押すだけで指定の頁が開きます。</p>
+      <p class="small muted">覚えているPDF ${fmt(memo.length)} 個（${gbs(memoSize)}）${noPath && PDF.size ? `。iPadでの場所が分からないPDF ${fmt(noPath)} 個（PCで「iPad用PDFを作る」のあとの持ち出しファイルを取り込むと出ます）` : ""}</p>
+      ${memo.length ? `<button class="btn sm" id="b-forget">覚えたPDFを忘れる（iPadの空きを増やす）</button>` : ""}</div>
     <div class="card"><h3>PDFの一覧</h3><div class="bar"><input id="q" value="${esc(q)}" placeholder="ファイル名・フォルダ名（例：京都叢書）"><button class="btn pri" id="b-q">絞る</button>
-      <label class="small"><input type="checkbox" id="c-all" ${only ? "" : "checked"}> iPadに入っていないものも出す</label><span class="small">${fmt(rows.length)} 個</span></div>
-      <table class="tb"><tr><th>ファイル</th><th>フォルダ</th><th class="num">頁</th><th class="num">大きさ</th><th></th></tr>
-      ${rows.slice(0, 500).map(([id, r]) => { const parts = (r.relpath || "").split("\\"); const nm = parts.pop();
-        return `<tr class="${PDFHAVE.has(id) ? "click" : ""}" data-id="${id}"><td><b>${esc(nm)}</b>${r.kind ? ` <span class="tag">${esc(r.kind)}</span>` : ""}</td><td class="small">${esc(r.root || "")}${parts.length ? "　" + esc(parts.join(" › ")) : ""}</td>
-          <td class="num">${r.pages || ""}</td><td class="num">${r.size ? gbs(r.size) : ""}</td><td>${PDFHAVE.has(id) ? "" : `<span class="tag warn">未</span>`}</td></tr>`; }).join("")}</table>
+      <label class="small"><input type="checkbox" id="c-mine" ${mine ? "checked" : ""}> 覚えているものだけ</label><span class="small">${fmt(rows.length)} 個</span></div>
+      ${PDF.size ? "" : `<p class="small muted">持ち出しファイルを取り込むと、PDFの一覧が出ます。</p>`}
+      <table class="tb"><tr><th>ファイル</th><th>「ファイル」の このiPad内 での場所</th><th class="num">頁</th><th></th></tr>
+      ${rows.slice(0, 500).map(([id, r]) => { const ip = (r.ipad_path || "").split("/"); const nm = ip.length > 1 ? ip.pop() : (r.relpath || "").split("\\").pop();
+        return `<tr class="click" data-id="${id}"><td><b>${esc(nm)}</b>${r.kind ? ` <span class="tag">${esc(r.kind)}</span>` : ""}</td><td class="small">${ip.length && r.ipad_path ? esc(ip.join(" › ")) : `<span class="muted">（iPad用がない）</span>`}</td>
+          <td class="num">${r.ipad_pages || ""}</td><td>${PDFHAVE.has(id) ? `<span class="tag ok">覚えている</span>` : ""}</td></tr>`; }).join("")}</table>
       ${rows.length > 500 ? `<p class="small muted">はじめの500個を出しています。絞ってください。</p>` : ""}</div>`;
-  const goQ = () => go("pdf?" + new URLSearchParams({q: $("#q").value, ...($("#c-all").checked ? {all: "1"} : {})}).toString());
-  $("#b-q").addEventListener("click", goQ); $("#c-all").addEventListener("change", goQ); $("#q").addEventListener("keydown", e => { if (e.key === "Enter") goQ(); });
+  const goQ = () => go("pdf?" + new URLSearchParams({q: $("#q").value, ...($("#c-mine").checked ? {mine: "1"} : {})}).toString());
+  $("#b-q").addEventListener("click", goQ); $("#c-mine").addEventListener("change", goQ); $("#q").addEventListener("keydown", e => { if (e.key === "Enter") goQ(); });
   main().querySelectorAll("tr.click[data-id]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.id), 1)));
-  const showSel = () => { const fs = [...$("#f-b").files].sort((a, b) => a.name.localeCompare(b.name));
-    $("#b-sel").innerHTML = fs.length ? `<table class="tb"><tr><th>選んだ束（${fs.length} 個）</th><th class="num">大きさ</th><th style="width:45%">ようす</th></tr>${fs.map((f, i) => `<tr><td>${esc(f.name)}${bdone[f.name] ? ` <span class="tag ok">前に入れた</span>` : ""}</td><td class="num">${gbs(f.size)}</td>
-      <td><div class="pbar"><div id="pb${i}"></div></div><span class="small" id="ps${i}">待っています</span></td></tr>`).join("")}</table>` : `<p class="small muted">まだ選んでいません。</p>`; return fs; };
-  $("#f-b").addEventListener("change", async () => {        // 選んだら自動で入れ始める(iPadでは選ぶ画面がボタンにかぶるため)
-    const fs = showSel(), msg = $("#b-msg"); if (!fs.length) return;
-    const bad = fs.filter(f => !/\.zip$/i.test(f.name)); if (bad.length) { msg.textContent = `zip ではないファイルが入っています（${bad.map(f => f.name).join("、")}）。iPad用PDF_NN.zip を選んでください。`; return; }
-    $("#f-b").disabled = true; $("#l-b").classList.add("off"); if ($("#ps0")) $("#ps0").textContent = "始めています…";
-    // iPadへの頼みごと(取っておく・画面を消さない)は、返事を待たずに先へ進む(返事が来ないことがあるため)
-    const soon = (pr, ms) => Promise.race([Promise.resolve(pr).catch(() => null), new Promise(r => setTimeout(() => r(null), ms))]);
-    try { if (navigator.storage && navigator.storage.persist) soon(navigator.storage.persist(), 1500); } catch (e) {}
-    let lock = null; try { if (navigator.wakeLock) lock = await soon(navigator.wakeLock.request("screen"), 1500); } catch (e) {}
-    msg.innerHTML = `<b>入れています。終わるまでこの画面のまま、ほかのアプリに切り替えないでください。</b>`;
-    let tn = 0, ts = 0, ok = 0;
-    for (const [i, f] of fs.entries()) {
-      const pb = $("#pb" + i), ps = $("#ps" + i); ps.textContent = "束を開いています…";
-      try {
-        const r = await importBundle(f, (k, N, p, sk) => { pb.style.width = (k / N * 100).toFixed(1) + "%"; ps.textContent = `${k}／${N}　${sk ? "（入っている）" : ""}${p.relpath.split("\\").pop()}`; });
-        tn += r.n; ts += r.skip; ok++; pb.style.width = "100%"; pb.classList.add("ok"); ps.textContent = `済み：${r.n} 個入れた${r.skip ? `・${r.skip} 個は入っていた` : ""}`;
-      } catch (ex) {
-        ps.innerHTML = `<span style="color:var(--bad)">入れられませんでした：${esc(ex.message)}</span>`;
-        if (/quota|space|容量/i.test(ex.message + ex.name)) { alert("iPadの空きが足りません。"); break; }
-      }
-      foot();
-    }
-    try { lock && lock.release(); } catch (e) {}
-    msg.innerHTML = `<b style="color:var(--ok)">終わりました。</b>束 ${ok}／${fs.length} 個、PDF ${fmt(tn)} 個を入れました${ts ? `（${fmt(ts)} 個は入っていたので飛ばした）` : ""}。続けて次の束を選べます。`;
-    const keep = msg.innerHTML; await viewPdf(params); $("#b-msg").innerHTML = keep;
-  });
+  if ($("#b-forget")) $("#b-forget").addEventListener("click", async () => { if (!confirm("覚えたPDFを都名所から消します（「ファイル」のPDFは消えません。また選べば開けます）。よいですか？")) return;
+    const T = tx("pdfs", "readwrite"); T.objectStore("pdfs").clear(); await done(T); await kvSet("pdfinfo", {}); await kvSet("bundles", {}); PDFHAVE = new Set(); PDFINFO = {}; foot(); viewPdf(params); });
 }
 
 // ------------------------------------------------------------ 持ち出し・持ち帰り
@@ -355,7 +315,7 @@ async function viewMochi() {
   $("#b-in").addEventListener("click", async () => {
     const f = $("#f-in").files[0], msg = $("#in-msg"); if (!f) { msg.textContent = "ファイルを選んでください。"; return; }
     if (NCHG && !(sent && (await kvGet("sent_n")) === NCHG) && !confirm(`このiPadで直したところが ${NCHG} か所あり、まだ持ち帰りファイルにしていません。取り込むと消えます。取り込みますか？`)) return;
-    try { await importZip(f, t => msg.textContent = t); msg.textContent = "取り込みました。"; await loadAll(); foot(); } catch (ex) { msg.textContent = "取り込めませんでした：" + ex.message; }
+    try { await importZip(f, t => msg.textContent = t); await loadAll(); foot(); msg.textContent = "取り込みました。"; } catch (ex) { msg.textContent = "取り込めませんでした：" + ex.message; }
   });
   $("#b-out").addEventListener("click", async () => {
     const ch = await getAll("changes"), ids = {}; STORES.forEach(s => ids[s] = {});
