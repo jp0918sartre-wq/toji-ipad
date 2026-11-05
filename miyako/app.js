@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05n";
+const APPVER = "2026-11-05p";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -350,6 +350,34 @@ async function viewChanges() {
     ${ch.slice().reverse().map(x => `<tr><td class="small">${esc(x.at)}</td><td class="small">${esc(x.tbl)} ${x.id}</td><td>${esc(x.label)}</td><td class="small">${esc(x.old.slice(0, 50))}</td><td class="small">${esc(x.new.slice(0, 50))}</td></tr>`).join("") || "<tr><td>まだありません。</td></tr>"}</table></div>`;
 }
 
+// ------------------------------------------------------------ 本とPDFの結びつき(見るだけ。PDFは開かない)
+function viewLinks(params) {
+  if (need()) return;
+  const sp = new URLSearchParams(params || ""), q = sp.get("q") || "", how = sp.get("how") || "";
+  const howOf = x => x.memo === "自動で結んだ" ? "auto" : x.memo === "iPadで結んだ" ? "ipad" : "pc";
+  const HOW = {auto: ["自動", "warn"], ipad: ["iPadで", "acc"], pc: ["PCで", "ok"]};
+  const ts = q.normalize("NFKC").split(/\s+/).filter(Boolean);
+  const rows = BOOKPDF.filter(x => D.book.has(x.book_id) && PDF.has(x.pdf_id)).map(x => ({x, b: D.book.get(x.book_id), r: PDF.get(x.pdf_id)}))
+    .filter(({x, b, r}) => (!how || howOf(x) === how) && (!ts.length || ts.every(t => [b.title, b.author, b.sosho, b.sosho_kan, r.relpath].join(" ").normalize("NFKC").includes(t))))
+    .sort((a, c) => (a.b.year || 9999) - (c.b.year || 9999) || (a.b.title || "").localeCompare(c.b.title || "", "ja") || (a.r.relpath || "").localeCompare(c.r.relpath || "", "ja"));
+  const cnt = k => BOOKPDF.filter(x => D.book.has(x.book_id) && PDF.has(x.pdf_id) && (!k || howOf(x) === k)).length;
+  const nb = new Set(rows.map(o => o.x.book_id)).size;
+  main().innerHTML = `<h2>本とPDFの結びつき</h2><p class="lead">どの本に、どのPDFを結んであるかの一覧です（見るだけ。PDFは開きません）。書名を押すと本の画面へ。</p>
+    <div class="card"><div class="bar"><input id="q" type="search" enterkeyhint="search" autocomplete="off" value="${esc(q)}" placeholder="書名・叢書・PDFの名前"><button class="btn pri" id="b-q">絞る</button></div>
+    <div class="seg">${[["", `すべて（${cnt("")}）`], ["auto", `自動で結んだ（${cnt("auto")}）`], ["pc", `PCで結んだ（${cnt("pc")}）`], ["ipad", `iPadで結んだ（${cnt("ipad")}）`]].map(([k, l]) => `<button class="${how === k ? "on" : ""}" data-how="${k}">${l}</button>`).join("")}</div>
+    <p class="small">${nb} 冊・${rows.length} 件</p>
+    <table class="tb"><tr><th>刊年</th><th>書名</th><th>結んだPDF</th><th>USBでの場所</th><th class="num">頁</th><th>結び方</th></tr>
+    ${rows.slice(0, 600).map(({x, b, r}, i) => { const first = i === 0 || rows[i - 1].x.book_id !== x.book_id; const ip = (r.ipad_path || "").split("/"); ip.pop();
+      return `<tr${first ? ' class="grp1"' : ""}><td>${first ? (b.year || "") : ""}</td><td>${first ? `<span class="link" data-book="${b.id}"><b>${esc(b.title)}</b></span><div class="small">${esc(b.sosho || "")} ${esc(b.sosho_kan || "")}</div>` : ""}</td>
+        <td><b>${esc(pdfName(x.pdf_id))}</b>${r.kind ? ` <span class="tag">${esc(r.kind)}</span>` : ""}</td><td class="small">${r.ipad_path ? esc(ip.join(" › ")) : `<span style="color:var(--warn)">USB用なし</span>`}</td>
+        <td class="num">${r.ipad_pages || ""}</td><td><span class="tag ${HOW[howOf(x)][1]}">${HOW[howOf(x)][0]}</span></td></tr>`; }).join("")}</table>
+    ${rows.length > 600 ? `<p class="small muted">はじめの600件を出しています。絞ってください。</p>` : ""}</div>`;
+  const goL = (h = how) => go("links?" + new URLSearchParams({q: $("#q").value, how: h}).toString());
+  $("#b-q").addEventListener("click", () => goL()); $("#q").addEventListener("keydown", e => { if (e.key === "Enter") goL(); });
+  main().querySelectorAll("[data-how]").forEach(e => e.addEventListener("click", () => goL(e.dataset.how)));
+  main().querySelectorAll("[data-book]").forEach(e => e.addEventListener("click", () => go("book/" + e.dataset.book)));
+}
+
 // ------------------------------------------------------------ PDFの一覧(どのPDFがUSBのどこにあるか)
 const gbs = n => n >= 1e9 ? (n / 1e9).toFixed(1) + "GB" : (n / 1e6).toFixed(0) + "MB";
 async function viewPdf(params) {
@@ -477,7 +505,7 @@ async function route() {
   document.querySelectorAll("nav a[data-view]").forEach(x => x.classList.toggle("on", x.dataset.view === ({ap: "home", meisho: "home", book: "books"}[v] || v)));
   try {
     if (v === "meisho") viewMeisho(Number(arg)); else if (v === "ap") viewAp(Number(arg)); else if (v === "books") viewBooks(params); else if (v === "book") viewBook(Number(arg));
-    else if (v === "search") viewSearch(params); else if (v === "kake") viewKake(); else if (v === "changes") await viewChanges(); else if (v === "mochi") await viewMochi(); else if (v === "export") viewExport(); else if (v === "pdf") await viewPdf(params); else viewHome();
+    else if (v === "search") viewSearch(params); else if (v === "kake") viewKake(); else if (v === "changes") await viewChanges(); else if (v === "mochi") await viewMochi(); else if (v === "export") viewExport(); else if (v === "pdf") await viewPdf(params); else if (v === "links") viewLinks(params); else viewHome();
     window.scrollTo(0, 0);
   } catch (ex) { main().innerHTML = `<div class="note">表示できませんでした: ${esc(ex.message)}</div>`; }
 }

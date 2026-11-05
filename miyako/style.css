@@ -300,3 +300,4 @@ input#q{font-size:17px;padding:8px 12px;min-width:260px;border:2px solid #8a93a1
 .cq-row:active,.cq-row:hover{background:#eef5fb}
 .cq-row.linked{background:#eaf4ee}
 .cq-nm{font-size:17px;font-weight:700;word-break:break-all}
+tr.grp1 td{border-top:2px solid #c9d0d9}
