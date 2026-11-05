@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05g";
+const APPVER = "2026-11-05h";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -225,8 +225,11 @@ const bookUsb = id => { const ps = bookPdfs(id); return {n: ps.length, ok: ps.fi
 function viewBooks(params) {
   if (need()) return;
   const q = new URLSearchParams(params || "").get("q") || "";
-  const rows = [...D.book.values()].filter(b => !q || [b.title, b.author, b.yomi, b.memo].join(" ").includes(q)).sort((a, b) => (a.year || 9999) - (b.year || 9999));
-  main().innerHTML = `<h2>本の台帳</h2><div class="card"><div class="bar"><input id="q" type="search" enterkeyhint="search" autocomplete="off" value="${esc(q)}" placeholder="書名・著者"><button class="btn pri" id="b-q">絞る</button><span class="small">${rows.length} 冊</span><span style="flex:1"></span><button class="btn" id="b-new">＋ 本を足す</button></div>
+  // 書名・よみ・著者・版元・刊年・叢書と巻・メモ・結んだPDFのファイル名で探す(空白で区切ると、すべてを含むもの)
+  const hay = b => [b.title, b.yomi, b.author, b.publisher, b.year, b.wareki, b.genre, b.sosho, b.sosho ? b.sosho + (b.sosho_kan || "") : "", b.memo, ...bookPdfs(b.id).map(pdfName)].join(" ").normalize("NFKC");
+  const ts = q.normalize("NFKC").split(/\s+/).filter(Boolean);
+  const rows = [...D.book.values()].filter(b => { if (!ts.length) return true; const h = hay(b); return ts.every(t => h.includes(t)); }).sort((a, b) => (a.year || 9999) - (b.year || 9999));
+  main().innerHTML = `<h2>本の台帳</h2><div class="card"><div class="bar"><input id="q" type="search" enterkeyhint="search" autocomplete="off" value="${esc(q)}" placeholder="書名・著者・叢書・PDFの名前（例：新撰京都叢書1）"><button class="btn pri" id="b-q">絞る</button><span class="small">${rows.length} 冊</span><span style="flex:1"></span><button class="btn" id="b-new">＋ 本を足す</button></div>
     <p class="small muted">「USB」：その本のPDFがUSB（外で読む用の写し）に入っているか。</p>
     <table class="tb"><tr><th>刊年</th><th>書名</th><th>著者</th><th>種類</th><th>叢書</th><th>USB</th></tr>${rows.map(b => { const u = bookUsb(b.id); return `<tr class="click" data-id="${b.id}"><td>${b.year || ""}</td><td><b>${esc(b.title)}</b>${b.id < 0 ? ` <span class="tag acc">iPadで足した</span>` : ""}</td><td class="small">${esc(b.author || "")}</td><td class="small">${esc(b.genre || "")}</td><td class="small">${esc(b.sosho || "")} ${esc(b.sosho_kan || "")}</td>
       <td>${u.n ? (u.ok === u.n ? `<span class="tag ok">あり</span>` : `<span class="tag warn">${u.ok}／${u.n}</span>`) : `<span class="small muted">PDFなし</span>`}</td></tr>`; }).join("")}</table></div>`;
