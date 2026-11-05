@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05f";
+const APPVER = "2026-11-05g";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -226,12 +226,13 @@ function viewBooks(params) {
   if (need()) return;
   const q = new URLSearchParams(params || "").get("q") || "";
   const rows = [...D.book.values()].filter(b => !q || [b.title, b.author, b.yomi, b.memo].join(" ").includes(q)).sort((a, b) => (a.year || 9999) - (b.year || 9999));
-  main().innerHTML = `<h2>本の台帳</h2><div class="card"><div class="bar"><input id="q" value="${esc(q)}" placeholder="書名・著者"><button class="btn pri" id="b-q">絞る</button><span class="small">${rows.length} 冊</span><span style="flex:1"></span><button class="btn" id="b-new">＋ 本を足す</button></div>
+  main().innerHTML = `<h2>本の台帳</h2><div class="card"><div class="bar"><input id="q" type="search" enterkeyhint="search" autocomplete="off" value="${esc(q)}" placeholder="書名・著者"><button class="btn pri" id="b-q">絞る</button><span class="small">${rows.length} 冊</span><span style="flex:1"></span><button class="btn" id="b-new">＋ 本を足す</button></div>
     <p class="small muted">「USB」：その本のPDFがUSB（外で読む用の写し）に入っているか。</p>
     <table class="tb"><tr><th>刊年</th><th>書名</th><th>著者</th><th>種類</th><th>叢書</th><th>USB</th></tr>${rows.map(b => { const u = bookUsb(b.id); return `<tr class="click" data-id="${b.id}"><td>${b.year || ""}</td><td><b>${esc(b.title)}</b>${b.id < 0 ? ` <span class="tag acc">iPadで足した</span>` : ""}</td><td class="small">${esc(b.author || "")}</td><td class="small">${esc(b.genre || "")}</td><td class="small">${esc(b.sosho || "")} ${esc(b.sosho_kan || "")}</td>
       <td>${u.n ? (u.ok === u.n ? `<span class="tag ok">あり</span>` : `<span class="tag warn">${u.ok}／${u.n}</span>`) : `<span class="small muted">PDFなし</span>`}</td></tr>`; }).join("")}</table></div>`;
   $("#b-new").addEventListener("click", async () => { const i = await newId("book"); await saveRow("book", i, {title: "（新しい本）"}, {title: "書名"}); go("book/" + i); });
   $("#b-q").addEventListener("click", () => go("books?q=" + encodeURIComponent($("#q").value)));
+  $("#q").addEventListener("keydown", e => { if (e.key === "Enter") go("books?q=" + encodeURIComponent($("#q").value)); });
   main().querySelectorAll("tr[data-id]").forEach(e => e.addEventListener("click", () => go("book/" + e.dataset.id)));
 }
 function viewBook(id) {
@@ -253,7 +254,7 @@ function viewSearch(params) {
   const q = (new URLSearchParams(params || "").get("q") || "").trim();
   let rows = [];
   if (q) { const ts = q.split(/\s+/); rows = [...D.appear.values()].filter(a => { const s = [...HF.map(([k]) => a[k] || ""), a.heading || "", book(a.book_id).title || "", (D.meisho.get(a.meisho_id) || {}).name || ""].join("\n"); return ts.every(t => s.includes(t)); }).sort(byYear); }
-  main().innerHTML = `<h2>翻刻から探す</h2><div class="card"><div class="bar"><input id="q" value="${esc(q)}" placeholder="例：衣笠"><button class="btn pri" id="b-q">探す</button>${q ? `<span class="small">${rows.length} 件</span>` : ""}</div>
+  main().innerHTML = `<h2>翻刻から探す</h2><div class="card"><div class="bar"><input id="q" type="search" enterkeyhint="search" autocomplete="off" value="${esc(q)}" placeholder="例：衣笠"><button class="btn pri" id="b-q">探す</button>${q ? `<span class="small">${rows.length} 件</span>` : ""}</div>
     <table class="tb">${rows.slice(0, 400).map(a => { const s = HF.map(([k]) => a[k] || "").join(" "); const j = s.indexOf(q.split(/\s+/)[0]);
       return `<tr class="click" data-id="${a.id}"><td>${book(a.book_id).year || ""}</td><td>${esc((D.meisho.get(a.meisho_id) || {}).name)}</td><td><b>${esc(book(a.book_id).title || "")}</b></td><td class="small">${kt(j >= 0 ? "…" + s.slice(Math.max(0, j - 15), j + 25) + "…" : "")}</td></tr>`; }).join("")}</table></div>`;
   $("#b-q").addEventListener("click", () => go("search?q=" + encodeURIComponent($("#q").value)));
@@ -295,7 +296,7 @@ async function viewPdf(params) {
     <div class="card"><p>外で読む用のPDFは<b>USBの「iPad用PDF › 都名所PDF」</b>に、PCと同じフォルダ分け・同じ名前で入っています（PCが原本、USBはその写し）。iPadには保存しません。<br>
       PDFの行（条や本の画面のPDFのボタンも同じ）を押すと、USBのどこにあるかが出るので、USBから選んで開きます。都名所を開いている間は、同じPDFを選び直さずに開けます。</p>
       <p class="small muted">PDF ${fmt(PDF.size)} 個のうち、USBに入っている ${fmt(PDF.size - noPath)} 個${noPath && PDF.size ? `・USB用なし ${fmt(noPath)} 個` : ""}。</p></div>
-    <div class="card"><h3>PDFの一覧</h3><div class="bar"><input id="q" value="${esc(q)}" placeholder="ファイル名・フォルダ名（例：京都叢書）"><button class="btn pri" id="b-q">絞る</button>
+    <div class="card"><h3>PDFの一覧</h3><div class="bar"><input id="q" type="search" enterkeyhint="search" autocomplete="off" value="${esc(q)}" placeholder="ファイル名・フォルダ名（例：京都叢書）"><button class="btn pri" id="b-q">絞る</button>
       <label class="small"><input type="checkbox" id="c-mine" ${mine ? "checked" : ""}> USBに入っているものだけ</label><span class="small">${fmt(rows.length)} 個</span></div>
       ${PDF.size ? "" : `<p class="small muted">持ち出しファイルを取り込むと、PDFの一覧が出ます。</p>`}
       <table class="tb"><tr><th>ファイル</th><th>USBの「iPad用PDF」の中の場所</th><th class="num">頁</th><th></th></tr>
