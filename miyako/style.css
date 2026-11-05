@@ -273,3 +273,8 @@ table.tb tr[data-id]:hover,table.tb tr[data-go]:hover{background:var(--accent-so
 .vh{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
 .ask{background:#fff;margin:calc(60px + env(safe-area-inset-top)) auto 0;max-width:640px;border-radius:12px;padding:24px 26px;line-height:1.8}
 .ask-name{font-size:18px;font-weight:700;margin:6px 0 10px;word-break:break-all}
+.pv-row{flex:1;display:flex;min-height:0}
+.pv-row #pv-wrap{flex:1}
+#pv-side{width:44%;background:#fff;padding:10px;display:flex;flex-direction:column;border-left:2px solid #1b2836}
+#pv-side[hidden]{display:none}
+#pv-side textarea{flex:1;min-height:200px;font-size:17px;line-height:1.8}

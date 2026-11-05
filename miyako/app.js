@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05d";
+const APPVER = "2026-11-05e";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -31,7 +31,9 @@ const getAll = s => req(tx(s).objectStore(s).getAll());
 
 let META = null, D = {appear: new Map(), book: new Map(), meisho: new Map(), kake: new Map()}, PDF = new Map(), BOOKPDF = [], PDFHAVE = new Set(), PDFINFO = {}, NCHG = 0;
 async function loadAll() {
-  PDFHAVE = new Set(await req(tx("pdfs").objectStore("pdfs").getAllKeys())); PDFINFO = (await kvGet("pdfinfo")) || {};
+  // PDFはiPadに保存しない(USBが外で読む用の写し。iPadに入れると二重管理になる)。前に保存した分は一度だけ消して空きを戻す
+  if (!(await kvGet("pdfs_cleared_1105"))) { const T = tx("pdfs", "readwrite"); T.objectStore("pdfs").clear(); await done(T); await kvSet("pdfinfo", {}); await kvSet("bundles", {}); await kvSet("pdfs_cleared_1105", nowStr()); }
+  PDFINFO = {};
   META = await kvGet("meta"); if (!META) return;
   HF = META.hf || HF;
   for (const s of STORES) D[s] = new Map((await getAll(s)).map(r => [r.id, r]));
@@ -40,7 +42,7 @@ async function loadAll() {
 }
 function foot() {
   $("#cbadge").textContent = NCHG || "";
-  $("#foot").innerHTML = META ? `持ち出し ${esc(META.exported_at)}<br>本 ${fmt(D.book.size)}・名所 ${fmt(D.meisho.size)}<br>出てくる所 ${fmt(D.appear.size)}<br>PDF ${fmt(PDFHAVE.size)} 個入っている<br>iPadで直した ${fmt(NCHG)} か所<br><span style="opacity:.6">画面 ${APPVER}</span>`
+  $("#foot").innerHTML = META ? `持ち出し ${esc(META.exported_at)}<br>本 ${fmt(D.book.size)}・名所 ${fmt(D.meisho.size)}<br>出てくる所 ${fmt(D.appear.size)}<br>iPadで直した ${fmt(NCHG)} か所<br><span style="opacity:.6">画面 ${APPVER}</span>`
     : `まだ持ち出しファイルを取り込んでいません<br><span style="opacity:.6">画面 ${APPVER}</span>`;
 }
 function need() { if (META) return false; main().innerHTML = `<h2>はじめに</h2><div class="card"><p>まだデータが入っていません。「持ち出し・持ち帰り」で、家のPCで作った持ち出しファイルを取り込んでください。</p><button class="btn pri" onclick="go('mochi')">持ち出し・持ち帰りへ</button></div>`; return true; }
@@ -50,10 +52,8 @@ const apYear = a => book(a.book_id).year;
 const byYear = (a, b) => (apYear(a) || 9999) - (apYear(b) || 9999) || (a.sort || 0) - (b.sort || 0);
 
 // ------------------------------------------------------------ PDF(重ねて開く。頁を指定して開く)
-// 軽いPDFは、iPadの「ファイル」(このiPad内 › 都名所PDF › …)に、PCと同じフォルダ分けで置いてある(PCの ipad_pdf.py が作る)。
-// 都名所は、初めて開くPDFだけ「ファイル」から選んでもらい、IndexedDB の pdfs に {id, blob} で覚える(2回目からはすぐ開く)。
-// PDFINFO(kv "pdfinfo")に {id: {root, relpath, size, at}}。
-// 表示は pdf.js。PDFをまるごと読み込まず、要る所だけ Blob から切り出して読む(大きいPDFでもメモリを食わない)。
+// 外で読む用の軽いPDFは、USBの「iPad用PDF › 都名所PDF」に、PCと同じフォルダ分けで入っている(PCの ipad_pdf.py が作る。PCが原本、USBが写し)。
+// iPadには保存しない(二重管理になるため)。開くときにUSBから選んでもらい、都名所を開いている間だけ SESS に覚えておく。
 const pdfName = id => ((PDF.get(id) || PDFINFO[id] || {}).relpath || String(id)).split("\\").pop();
 function loadPdfjs() {
   return new Promise((ok, ng) => { if (window.pdfjsLib) return ok(); const s = document.createElement("script"); s.src = "lib/pdfjs/pdf.min.js";
@@ -61,38 +61,34 @@ function loadPdfjs() {
 }
 const PV = {doc: null, id: null, page: 1, zoom: 1, task: null, rot: 0};
 const ipadPath = id => ((PDF.get(id) || {}).ipad_path || "");
-// まだ覚えていないPDF:「ファイル」のどこにあるかを出して、選んでもらう
-function askPdf(id, page) {
+// USBのPDFを選んでもらう(iPadには保存しない。この画面を開いている間だけ、選んだファイルを覚えておく)
+const SESS = new Map();
+function askPdf(id, page, apId) {
   const ip = ipadPath(id), parts = ip.split("/"), nm = pdfName(id);
-  $("#ov-body").innerHTML = `<div class="ask"><h3>このPDFを選んでください（初めての1回だけ）</h3>
+  $("#ov-body").innerHTML = `<div class="ask"><h3>USBからこのPDFを選んでください</h3>
     <p class="ask-name">${esc(nm)}</p>
-    ${ip ? `<p>USBを挿して、下のボタンから<br><b>USB › iPad用PDF › ${parts.slice(0, -1).map(esc).join(" › ")}</b><br>を開き、このPDFを選んでください。</p>` : `<p class="muted">（このPDFのiPadでの場所が分かりません。PCで「iPad用PDFを作る」を動かしたあとの持ち出しファイルを取り込むと出ます）</p>`}
-    <label for="f-ask" class="btn pri big">📂 ファイルから選ぶ</label><input type="file" id="f-ask" class="vh">
-    <p class="small" id="ask-msg">選ぶと、都名所が覚えて、次からはUSBが無くてもすぐ開きます。</p></div>`;
+    ${ip ? `<p>下のボタンを押して<br><b>USB › iPad用PDF › ${parts.slice(0, -1).map(esc).join(" › ")}</b><br>を開き、このPDFを選んで「開く」。</p>` : `<p class="muted">（このPDFのUSBでの場所が分かりません。USB用がまだ作られていないか、作れなかったPDFです）</p>`}
+    <label for="f-ask" class="btn pri big">📂 USBから選ぶ</label><input type="file" id="f-ask" class="vh">
+    <p class="small muted" id="ask-msg">iPadには保存しません。都名所を開いている間は、同じPDFを選び直さずに開けます。</p></div>`;
   $("#ov").hidden = false;
-  $("#f-ask").addEventListener("change", async () => {
+  $("#f-ask").addEventListener("change", () => {
     const f = $("#f-ask").files[0]; if (!f) return;
     if (f.name.normalize() !== nm.normalize() && !confirm(`選んだのは「${f.name}」です。探しているのは「${nm}」です。このまま開きますか？`)) return;
-    $("#ask-msg").textContent = "覚えています…（大きいPDFは少しかかります）";
-    try {
-      const T = tx("pdfs", "readwrite"); T.objectStore("pdfs").put({id, blob: f}); await done(T);
-      PDFHAVE.add(id); const info = (await kvGet("pdfinfo")) || {}; info[id] = {root: (PDF.get(id) || {}).root, relpath: (PDF.get(id) || {}).relpath, size: f.size, at: nowStr()}; await kvSet("pdfinfo", info); PDFINFO = info; foot();
-    } catch (ex) { $("#ask-msg").textContent = "覚えられませんでした（" + ex.message + "）。iPadの空きを確かめてください。"; return; }
-    openPdf(id, page);
+    SESS.set(id, f); openPdf(id, page, apId);
   });
 }
-async function openPdf(id, page) {
-  const r = await req(tx("pdfs").objectStore("pdfs").get(id));
-  if (!r) return askPdf(id, page);
+async function openPdf(id, page, apId) {
+  const f = SESS.get(id);
+  if (!f) return askPdf(id, page, apId);
   await loadPdfjs();
   if (PV.doc && PV.id !== id) { try { PV.doc.destroy(); } catch (e) {} PV.doc = null; }
   $("#ov-body").innerHTML = `<div class="pv-bar"><button class="btn" id="pv-p">◀ 前</button><input id="pv-n" type="number" min="1" value="${page || 1}"><span id="pv-t" class="pv-t"></span><button class="btn" id="pv-nx">次 ▶</button>
-    <span style="flex:1"></span><button class="btn" id="pv-zo">－</button><span id="pv-z" class="pv-t">100%</span><button class="btn" id="pv-zi">＋</button><button class="btn" id="pv-fit">幅に合わせる</button><button class="btn" id="pv-r">↻</button></div>
-    <div class="pv-name">${esc(pdfName(id))}</div><div id="pv-wrap"><canvas id="pv-c"></canvas><div id="pv-msg" class="pv-msg">開いています…</div></div>`;
+    <span style="flex:1"></span><button class="btn" id="pv-zo">－</button><span id="pv-z" class="pv-t">100%</span><button class="btn" id="pv-zi">＋</button><button class="btn" id="pv-fit">幅に合わせる</button><button class="btn" id="pv-r">↻</button>${apId != null ? `<button class="btn" id="pv-side-b">✎ 翻刻を並べる</button>` : ""}</div>
+    <div class="pv-name">${esc(pdfName(id))}</div><div class="pv-row"><div id="pv-wrap"><canvas id="pv-c"></canvas><div id="pv-msg" class="pv-msg">開いています…</div></div><div id="pv-side" hidden></div></div>`;
   $("#ov").hidden = false;
   try {
     if (!PV.doc) {
-      const blob = r.blob, len = blob.size;
+      const blob = f, len = blob.size;
       const head = new Uint8Array(await blob.slice(0, Math.min(len, 262144)).arrayBuffer());
       const tr = new pdfjsLib.PDFDataRangeTransport(len, head);
       tr.requestDataRange = (b, e) => { blob.slice(b, e).arrayBuffer().then(ab => tr.onDataRange(b, new Uint8Array(ab))); };
@@ -111,8 +107,23 @@ async function openPdf(id, page) {
   let sx = null; const w = $("#pv-wrap");
   w.addEventListener("touchstart", e => { sx = e.touches.length === 1 && PV.zoom <= 1 ? e.touches[0].clientX : null; }, {passive: true});
   w.addEventListener("touchend", e => { if (sx == null) return; const dx = e.changedTouches[0].clientX - sx; sx = null; if (Math.abs(dx) > 80) goPage(PV.page + (dx < 0 ? 1 : -1)); });
+  if (apId != null) $("#pv-side-b").onclick = () => toggleSide(apId);
   goPage(page);
 }
+// PDFの横に、その条の翻刻などの欄を並べて打つ
+function toggleSide(apId) {
+  const sd = $("#pv-side"); sd.hidden = !sd.hidden; $("#pv-side-b").classList.toggle("pri", !sd.hidden);
+  if (!sd.hidden) {
+    const a = D.appear.get(apId) || {};
+    sd.innerHTML = `<div class="bar" style="margin-bottom:6px"><select id="sd-f">${HF.map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select><button class="btn pri" id="sd-s">保存</button><span class="small" id="sd-m"></span></div>
+      <textarea id="sd-t" class="mincho"></textarea><p class="small muted">返り点は ｛二｝｛一｝｛レ｝。欄を切り替えると、打った分はその欄に残ります（保存で記録）。</p>`;
+    const buf = {}; HF.forEach(([k]) => buf[k] = a[k] || ""); let cur = "honkoku"; $("#sd-t").value = buf[cur];
+    $("#sd-f").onchange = () => { buf[cur] = $("#sd-t").value; cur = $("#sd-f").value; $("#sd-t").value = buf[cur]; };
+    $("#sd-s").onclick = async () => { buf[cur] = $("#sd-t").value; const n = await saveRow("appear", apId, {...buf}, Object.fromEntries(HF)); $("#sd-m").textContent = n ? `保存しました（${n}か所）` : "変わったところはありません"; SIDE_DIRTY = true; };
+  }
+  drawPage();
+}
+let SIDE_DIRTY = false;
 async function drawPage() {
   const n = PV.page, pg = await PV.doc.getPage(n); if (n !== PV.page) return;
   const wrap = $("#pv-wrap"); if (!wrap) return;
@@ -128,7 +139,7 @@ async function drawPage() {
   PV.task = pg.render({canvasContext: c.getContext("2d"), viewport: vp});
   try { await PV.task.promise; } catch (e) { if (e && e.name !== "RenderingCancelledException") $("#pv-msg").textContent = "描けませんでした：" + e.message; }
 }
-function closeOv() { $("#ov").hidden = true; $("#ov-body").innerHTML = ""; if (PV.doc) { try { PV.doc.destroy(); } catch (e) {} PV.doc = null; PV.id = null; } }
+function closeOv() { $("#ov").hidden = true; $("#ov-body").innerHTML = ""; if (PV.doc) { try { PV.doc.destroy(); } catch (e) {} PV.doc = null; PV.id = null; } if (SIDE_DIRTY) { SIDE_DIRTY = false; route(); } }
 $("#ov-x").addEventListener("click", closeOv);
 document.addEventListener("keydown", e => { if ($("#ov").hidden) return; if (e.key === "Escape") closeOv();
   else if (e.key === "ArrowRight" && $("#pv-nx")) $("#pv-nx").click(); else if (e.key === "ArrowLeft" && $("#pv-p")) $("#pv-p").click(); });
@@ -190,7 +201,7 @@ function viewAp(id) {
   main().innerHTML = `${back("meisho/" + a.meisho_id)}<div class="bar"><h2 style="margin:0">${esc(m.name)}　／　${esc(b.title || "")}　<span class="small">${b.year || ""}</span></h2><span style="flex:1"></span>
       ${k > 0 ? `<button class="btn" onclick="go('ap/${sib[k - 1]}')">◀ 前の条</button>` : ""}<span class="small">${k + 1}／${sib.length}</span>${k < sib.length - 1 ? `<button class="btn" onclick="go('ap/${sib[k + 1]}')">次の条 ▶</button>` : ""}</div>
     <p class="small muted">${esc(a.heading || "")}</p>
-    ${pdfs.length ? `<div class="card"><div class="bar"><b>PDF</b>${pdfs.map(p => `<button class="btn sm" data-pdf="${p}">${PDFHAVE.has(p) ? "" : "📂 "}${esc(pdfName(p))}</button>`).join("")}<span class="small">頁</span><input id="pg" type="number" value="${a.pdf_page || 1}" style="width:70px"></div></div>` : `<p class="small muted">この条に結んだPDFはありません。</p>`}
+    ${pdfs.length ? `<div class="card"><div class="bar"><b>PDF</b>${pdfs.map(p => `<button class="btn sm" data-pdf="${p}">${SESS.has(p) ? "" : "📂 "}${esc(pdfName(p))}</button>`).join("")}<span class="small">頁</span><input id="pg" type="number" value="${a.pdf_page || 1}" style="width:70px"></div></div>` : `<p class="small muted">この条に結んだPDFはありません。</p>`}
     <div class="card form">
       <div class="row"><label>本</label><div><select id="book" style="width:100%"><option value="">（選ぶ）</option>${books.map(x => `<option value="${x.id}" ${x.id === a.book_id ? "selected" : ""}>${x.year || "????"}　${esc(x.title)}</option>`).join("")}</select></div></div>
       ${AP_F.map(([f, l]) => `<div class="row"><label>${l}</label><div><input data-a="${f}" value="${esc(a[f] || "")}" style="width:100%"></div></div>`).join("")}
@@ -199,7 +210,7 @@ function viewAp(id) {
       <label class="small"><input type="checkbox" id="chk" ${a.checked === "1" ? "checked" : ""}> 原本で確かめた</label>
       <div class="bar"><button class="btn pri" id="b-save">保存</button><button class="btn" id="b-prev">縦書きで見る</button><button class="btn" id="b-w">この条をWordで</button><span class="small" id="msg"></span></div>
       <div id="prev" class="honview" hidden></div></div>`;
-  main().querySelectorAll("[data-pdf]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.pdf), $("#pg").value)));
+  main().querySelectorAll("[data-pdf]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.pdf), $("#pg").value, id)));
   const val = () => { const o = {book_id: $("#book").value ? Number($("#book").value) : null}; main().querySelectorAll("[data-a]").forEach(e => o[e.dataset.a] = e.value);
     main().querySelectorAll("[data-h]").forEach(e => o[e.dataset.h] = e.value); o.checked = $("#chk").checked ? "1" : ""; return o; };
   const labels = Object.fromEntries([...HF, ...AP_F, ["checked", "原本で確かめた"], ["book_id", "本"]]);
@@ -209,12 +220,17 @@ function viewAp(id) {
 }
 
 // ------------------------------------------------------------ 本の台帳
+const bookPdfs = id => BOOKPDF.filter(x => x.book_id === id).map(x => x.pdf_id).filter((v, i, s) => s.indexOf(v) === i && PDF.has(v));
+const bookUsb = id => { const ps = bookPdfs(id); return {n: ps.length, ok: ps.filter(p => ipadPath(p)).length}; };
 function viewBooks(params) {
   if (need()) return;
   const q = new URLSearchParams(params || "").get("q") || "";
   const rows = [...D.book.values()].filter(b => !q || [b.title, b.author, b.yomi, b.memo].join(" ").includes(q)).sort((a, b) => (a.year || 9999) - (b.year || 9999));
-  main().innerHTML = `<h2>本の台帳</h2><div class="card"><div class="bar"><input id="q" value="${esc(q)}" placeholder="書名・著者"><button class="btn pri" id="b-q">絞る</button><span class="small">${rows.length} 冊</span></div>
-    <table class="tb"><tr><th>刊年</th><th>書名</th><th>著者</th><th>種類</th><th>叢書</th></tr>${rows.map(b => `<tr class="click" data-id="${b.id}"><td>${b.year || ""}</td><td><b>${esc(b.title)}</b></td><td class="small">${esc(b.author || "")}</td><td class="small">${esc(b.genre || "")}</td><td class="small">${esc(b.sosho || "")} ${esc(b.sosho_kan || "")}</td></tr>`).join("")}</table></div>`;
+  main().innerHTML = `<h2>本の台帳</h2><div class="card"><div class="bar"><input id="q" value="${esc(q)}" placeholder="書名・著者"><button class="btn pri" id="b-q">絞る</button><span class="small">${rows.length} 冊</span><span style="flex:1"></span><button class="btn" id="b-new">＋ 本を足す</button></div>
+    <p class="small muted">「USB」：その本のPDFがUSB（外で読む用の写し）に入っているか。</p>
+    <table class="tb"><tr><th>刊年</th><th>書名</th><th>著者</th><th>種類</th><th>叢書</th><th>USB</th></tr>${rows.map(b => { const u = bookUsb(b.id); return `<tr class="click" data-id="${b.id}"><td>${b.year || ""}</td><td><b>${esc(b.title)}</b>${b.id < 0 ? ` <span class="tag acc">iPadで足した</span>` : ""}</td><td class="small">${esc(b.author || "")}</td><td class="small">${esc(b.genre || "")}</td><td class="small">${esc(b.sosho || "")} ${esc(b.sosho_kan || "")}</td>
+      <td>${u.n ? (u.ok === u.n ? `<span class="tag ok">あり</span>` : `<span class="tag warn">${u.ok}／${u.n}</span>`) : `<span class="small muted">PDFなし</span>`}</td></tr>`; }).join("")}</table></div>`;
+  $("#b-new").addEventListener("click", async () => { const i = await newId("book"); await saveRow("book", i, {title: "（新しい本）"}, {title: "書名"}); go("book/" + i); });
   $("#b-q").addEventListener("click", () => go("books?q=" + encodeURIComponent($("#q").value)));
   main().querySelectorAll("tr[data-id]").forEach(e => e.addEventListener("click", () => go("book/" + e.dataset.id)));
 }
@@ -224,7 +240,9 @@ function viewBook(id) {
   const aps = [...D.appear.values()].filter(a => a.book_id === id);
   main().innerHTML = `${back("books")}<h2>${esc(b.title)}</h2><div class="card form">${F.map(([k, l]) => `<div class="row"><label>${l}</label><div>${k === "memo" ? `<textarea data-k="${k}" rows="3">${esc(b[k] || "")}</textarea>` : `<input data-k="${k}" value="${esc(b[k] ?? "")}" style="width:100%">`}</div></div>`).join("")}
     <div class="bar"><button class="btn pri" id="b-save">保存</button><span class="small" id="msg"></span></div></div>
+    <div class="card"><h3>PDF（USBでの置き場所）</h3>${bookPdfs(id).map(p => { const ip = ipadPath(p); return `<div class="bar"><button class="btn sm" data-pdf="${p}">📂 ${esc(pdfName(p))}</button><span class="small">${ip ? "USB › iPad用PDF › " + esc(ip.split("/").slice(0, -1).join(" › ")) + ((PDF.get(p) || {}).ipad_pages ? `（${PDF.get(p).ipad_pages}頁）` : "") : `<span style="color:var(--warn)">USB用なし（作れなかったか、まだ作っていない）</span>`}</span></div>`; }).join("") || `<p class="small muted">この本に結んだPDFはありません（PCの本の画面で結びます）。</p>`}</div>
     <div class="card"><h3>出てくる名所</h3>${aps.map(a => `<div class="link" onclick="go('ap/${a.id}')">${esc((D.meisho.get(a.meisho_id) || {}).name)}　${esc(a.maki || "")}　${esc(a.page || "")}</div>`).join("") || "<p class='small muted'>ありません。</p>"}</div>`;
+  main().querySelectorAll("[data-pdf]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.pdf), 1)));
   $("#b-save").addEventListener("click", async () => { const o = {}; main().querySelectorAll("[data-k]").forEach(e => o[e.dataset.k] = e.dataset.k === "year" ? (parseInt(e.value) || null) : e.value);
     const n = await saveRow("book", id, o, Object.fromEntries(F)); $("#msg").textContent = n ? `保存しました（${n}か所）` : "変わったところはありません"; });
 }
@@ -266,33 +284,28 @@ async function viewChanges() {
     ${ch.slice().reverse().map(x => `<tr><td class="small">${esc(x.at)}</td><td class="small">${esc(x.tbl)} ${x.id}</td><td>${esc(x.label)}</td><td class="small">${esc(x.old.slice(0, 50))}</td><td class="small">${esc(x.new.slice(0, 50))}</td></tr>`).join("") || "<tr><td>まだありません。</td></tr>"}</table></div>`;
 }
 
-// ------------------------------------------------------------ PDFの一覧(どのPDFが「ファイル」のどこにあるか・覚えたPDF)
+// ------------------------------------------------------------ PDFの一覧(どのPDFがUSBのどこにあるか)
 const gbs = n => n >= 1e9 ? (n / 1e9).toFixed(1) + "GB" : (n / 1e6).toFixed(0) + "MB";
 async function viewPdf(params) {
   const sp = new URLSearchParams(params || ""), q = sp.get("q") || "", mine = sp.get("mine") === "1";
-  const rows = [...PDF.entries()].filter(([id, r]) => (!mine || PDFHAVE.has(id)) && (!q || q.split(/\s+/).every(t => (r.relpath || "").includes(t))))
+  const rows = [...PDF.entries()].filter(([id, r]) => (!mine || r.ipad_path) && (!q || q.split(/\s+/).every(t => (r.relpath || "").includes(t))))
     .sort((a, b) => (a[1].root || "").localeCompare(b[1].root || "") || (a[1].relpath || "").localeCompare(b[1].relpath || "", "ja"));
-  const memo = Object.entries(PDFINFO).filter(([id]) => PDFHAVE.has(Number(id))); const memoSize = memo.reduce((x, [, v]) => x + (v.size || 0), 0);
   const noPath = [...PDF.values()].filter(r => !r.ipad_path).length;
   main().innerHTML = `<h2>PDF</h2>
-    <div class="card"><h3>しくみ</h3>
-      <p>軽くしたPDFは<b>USBの「iPad用PDF › 都名所PDF」</b>に、PCと同じフォルダ分け・同じ名前で入っています。iPadにコピーする必要はありません。<br>
-      条の画面や下の一覧でPDFを押すと、<b>初めての1回だけ</b>選ぶ画面になるので、USBを挿してそのPDFを選びます。選ぶと都名所が覚えて、次からはUSBが無くても、押すだけで指定の頁が開きます。</p>
-      <p class="small muted">覚えているPDF ${fmt(memo.length)} 個（${gbs(memoSize)}）${noPath && PDF.size ? `。iPadでの場所が分からないPDF ${fmt(noPath)} 個（PCで「iPad用PDFを作る」のあとの持ち出しファイルを取り込むと出ます）` : ""}</p>
-      ${memo.length ? `<button class="btn sm" id="b-forget">覚えたPDFを忘れる（iPadの空きを増やす）</button>` : ""}</div>
+    <div class="card"><p>外で読む用のPDFは<b>USBの「iPad用PDF › 都名所PDF」</b>に、PCと同じフォルダ分け・同じ名前で入っています（PCが原本、USBはその写し）。iPadには保存しません。<br>
+      PDFの行（条や本の画面のPDFのボタンも同じ）を押すと、USBのどこにあるかが出るので、USBから選んで開きます。都名所を開いている間は、同じPDFを選び直さずに開けます。</p>
+      <p class="small muted">PDF ${fmt(PDF.size)} 個のうち、USBに入っている ${fmt(PDF.size - noPath)} 個${noPath && PDF.size ? `・USB用なし ${fmt(noPath)} 個` : ""}。</p></div>
     <div class="card"><h3>PDFの一覧</h3><div class="bar"><input id="q" value="${esc(q)}" placeholder="ファイル名・フォルダ名（例：京都叢書）"><button class="btn pri" id="b-q">絞る</button>
-      <label class="small"><input type="checkbox" id="c-mine" ${mine ? "checked" : ""}> 覚えているものだけ</label><span class="small">${fmt(rows.length)} 個</span></div>
+      <label class="small"><input type="checkbox" id="c-mine" ${mine ? "checked" : ""}> USBに入っているものだけ</label><span class="small">${fmt(rows.length)} 個</span></div>
       ${PDF.size ? "" : `<p class="small muted">持ち出しファイルを取り込むと、PDFの一覧が出ます。</p>`}
       <table class="tb"><tr><th>ファイル</th><th>USBの「iPad用PDF」の中の場所</th><th class="num">頁</th><th></th></tr>
       ${rows.slice(0, 500).map(([id, r]) => { const ip = (r.ipad_path || "").split("/"); const nm = ip.length > 1 ? ip.pop() : (r.relpath || "").split("\\").pop();
         return `<tr class="click" data-id="${id}"><td><b>${esc(nm)}</b>${r.kind ? ` <span class="tag">${esc(r.kind)}</span>` : ""}</td><td class="small">${ip.length && r.ipad_path ? esc(ip.join(" › ")) : `<span class="muted">（iPad用がない）</span>`}</td>
-          <td class="num">${r.ipad_pages || ""}</td><td>${PDFHAVE.has(id) ? `<span class="tag ok">覚えている</span>` : ""}</td></tr>`; }).join("")}</table>
+          <td class="num">${r.ipad_pages || ""}</td><td>${SESS.has(id) ? `<span class="tag ok">選んである</span>` : ""}</td></tr>`; }).join("")}</table>
       ${rows.length > 500 ? `<p class="small muted">はじめの500個を出しています。絞ってください。</p>` : ""}</div>`;
   const goQ = () => go("pdf?" + new URLSearchParams({q: $("#q").value, ...($("#c-mine").checked ? {mine: "1"} : {})}).toString());
   $("#b-q").addEventListener("click", goQ); $("#c-mine").addEventListener("change", goQ); $("#q").addEventListener("keydown", e => { if (e.key === "Enter") goQ(); });
   main().querySelectorAll("tr.click[data-id]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.id), 1)));
-  if ($("#b-forget")) $("#b-forget").addEventListener("click", async () => { if (!confirm("覚えたPDFを都名所から消します（「ファイル」のPDFは消えません。また選べば開けます）。よいですか？")) return;
-    const T = tx("pdfs", "readwrite"); T.objectStore("pdfs").clear(); await done(T); await kvSet("pdfinfo", {}); await kvSet("bundles", {}); PDFHAVE = new Set(); PDFINFO = {}; foot(); viewPdf(params); });
 }
 
 // ------------------------------------------------------------ 持ち出し・持ち帰り
