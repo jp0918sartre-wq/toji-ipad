@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05q";
+const APPVER = "2026-11-05r";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -93,9 +93,12 @@ function askPdf(id, page, apId, bookId) {
     <p class="small" style="color:var(--ok)">${bookId != null && BOOKPDF.some(x => x.book_id === bookId && x.pdf_id === id) ? "この本とPDFの結びつきは記録してあります。" : ""}iPadの決まりで、都名所はUSBを自分で読めないため、開くときだけファイルを選んで渡してもらいます。</p>
     <p class="ask-name">${esc(nm)}</p>
     ${ip ? `<p>下のボタンを押して<br><b>USB › iPad用PDF › ${parts.slice(0, -1).map(esc).join(" › ")}</b><br>を開き、このPDFを選んで「開く」。</p>` : `<p class="muted">（このPDFのUSBでの場所が分かりません。USB用がまだ作られていないか、作れなかったPDFです）</p>`}
-    <label for="f-ask" class="btn pri big">📂 USBから選ぶ</label><input type="file" id="f-ask" class="vh">
+    <label for="f-ask" class="btn pri big" id="l-ask">📂 USBから選ぶ</label><input type="file" id="f-ask" class="vh">
+    <p class="copyhint">押すと、PDFの名前「${esc(nm.replace(/\.pdf$/i, ""))}」を自動でコピーします。<br>選ぶ画面が出たら、右上の <b>🔍</b> を押し、検索欄を長押しして <b>ペースト</b> → そのPDFだけが出ます。</p>
     <p class="small muted" id="ask-msg">iPadには保存しません。都名所を開いている間は、同じPDFを選び直さずに開けます。</p></div>`;
   $("#ov").hidden = false;
+  // 選ぶ画面で絞れるように、PDFの名前(拡張子なし)をコピーしておく
+  $("#l-ask").addEventListener("click", () => { try { navigator.clipboard.writeText(nm.replace(/\.pdf$/i, "")); } catch (e) {} });
   $("#f-ask").addEventListener("change", () => {
     const f = $("#f-ask").files[0]; if (!f) return;
     if (f.name.normalize() !== nm.normalize() && !confirm(`選んだのは「${f.name}」です。探しているのは「${nm}」です。このまま開きますか？`)) return;

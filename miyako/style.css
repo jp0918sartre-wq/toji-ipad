@@ -302,3 +302,4 @@ input#q{font-size:17px;padding:8px 12px;min-width:260px;border:2px solid #8a93a1
 .cq-nm{font-size:17px;font-weight:700;word-break:break-all}
 tr.grp1 td{border-top:2px solid #c9d0d9}
 .btn.usbopen{background:#1f5f8b;color:#fff;border-color:#1f5f8b;text-decoration:none;margin-top:3px;display:inline-block}
+.copyhint{background:#fff7e0;border:1.5px solid #e0a040;border-radius:8px;padding:10px 12px;font-size:15px;line-height:1.7;margin-top:12px}
