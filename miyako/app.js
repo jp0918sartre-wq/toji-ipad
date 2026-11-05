@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05e";
+const APPVER = "2026-11-05f";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -42,8 +42,8 @@ async function loadAll() {
 }
 function foot() {
   $("#cbadge").textContent = NCHG || "";
-  $("#foot").innerHTML = META ? `持ち出し ${esc(META.exported_at)}<br>本 ${fmt(D.book.size)}・名所 ${fmt(D.meisho.size)}<br>出てくる所 ${fmt(D.appear.size)}<br>iPadで直した ${fmt(NCHG)} か所<br><span style="opacity:.6">画面 ${APPVER}</span>`
-    : `まだ持ち出しファイルを取り込んでいません<br><span style="opacity:.6">画面 ${APPVER}</span>`;
+  $("#foot").innerHTML = META ? `持ち出し ${esc(META.exported_at)}<br>本 ${fmt(D.book.size)}・名所 ${fmt(D.meisho.size)}<br>出てくる所 ${fmt(D.appear.size)}<br>iPadで直した ${fmt(NCHG)} か所<br><span class="ver">画面 ${APPVER}</span>`
+    : `まだ持ち出しファイルを取り込んでいません<br><span class="ver">画面 ${APPVER}</span>`;
 }
 function need() { if (META) return false; main().innerHTML = `<h2>はじめに</h2><div class="card"><p>まだデータが入っていません。「持ち出し・持ち帰り」で、家のPCで作った持ち出しファイルを取り込んでください。</p><button class="btn pri" onclick="go('mochi')">持ち出し・持ち帰りへ</button></div>`; return true; }
 const back = to => `<button class="btn" onclick="history.length > 1 ? history.back() : go('${to}')" style="margin-bottom:10px">← 前に戻る</button>`;
