@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05s";
+const APPVER = "2026-11-05t";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -33,7 +33,7 @@ let META = null, D = {appear: new Map(), book: new Map(), meisho: new Map(), kak
 async function loadAll() {
   // PDFはiPadに保存しない(USBが外で読む用の写し。iPadに入れると二重管理になる)。前に保存した分は一度だけ消して空きを戻す
   if (!(await kvGet("pdfs_cleared_1105"))) { const T = tx("pdfs", "readwrite"); T.objectStore("pdfs").clear(); await done(T); await kvSet("pdfinfo", {}); await kvSet("bundles", {}); await kvSet("pdfs_cleared_1105", nowStr()); }
-  PDFINFO = {}; USBNAME = (await kvGet("usbname")) || USBNAME;
+  PDFINFO = {}; USBNAME = (await kvGet("usbname")) || USBNAME; OPENMODE = (await kvGet("openmode")) || OPENMODE;
   META = await kvGet("meta"); if (!META) return;
   HF = META.hf || HF;
   for (const s of STORES) D[s] = new Map((await getAll(s)).map(r => [r.id, r]));
@@ -65,8 +65,14 @@ const ipadPath = id => ((PDF.get(id) || {}).ipad_path || "");
 let USBNAME = "SSPE-USC";
 const usbUrl = id => { const ip = ipadPath(id); if (!ip) return "";
   return "shareddocuments:///private/var/mobile/Library/LiveFiles/com.apple.filesystems.userfsd/" + [USBNAME, "iPad用PDF", ...ip.split("/")].map(encodeURIComponent).join("/"); };
+// 「ショートカット」アプリで開く(押すだけでUSBのPDFが開く。iPadには取り込まない)
+// ショートカット「都名所PDF」：フォルダ(USB › iPad用PDF)から、渡したパスのファイルを取得 → クイックルック
+let OPENMODE = "shortcut";
+const shortcutUrl = id => { const ip = ipadPath(id); return ip ? "shortcuts://run-shortcut?name=" + encodeURIComponent("都名所PDF") + "&input=text&text=" + encodeURIComponent(ip) : ""; };
 // PDFのボタン：一度選んだもの(すぐ開く)と、まだのもの(USBから選ぶ)を色と字で分ける
-const pdfBtn = (p, attr = "") => SESS.has(p)
+const pdfBtn = (p, attr = "") => OPENMODE === "shortcut" && ipadPath(p)
+  ? `<button class="pbtn sc" data-pdf="${p}" ${attr}><span class="pst">開く</span>${esc(pdfName(p))}</button>`
+  : SESS.has(p)
   ? `<button class="pbtn now" data-pdf="${p}" ${attr}><span class="pst">すぐ開く</span>${esc(pdfName(p))}</button>`
   : `<button class="pbtn usb" data-pdf="${p}" ${attr}><span class="pst">USBから選ぶ</span>${esc(pdfName(p))}</button>`;
 const usbBtn = id => usbUrl(id) ? `<a class="btn sm usbopen" href="${usbUrl(id)}">USBで開く</a>` : "";
@@ -113,6 +119,7 @@ function askPdf(id, page, apId, bookId) {
   });
 }
 async function openPdf(id, page, apId, bookId) {
+  if (OPENMODE === "shortcut" && !SESS.has(id) && shortcutUrl(id)) { location.href = shortcutUrl(id); return; }   // ショートカットに渡してUSBから開く
   const f = SESS.get(id);
   if (!f) return askPdf(id, page, apId, bookId);
   await loadPdfjs();
@@ -399,6 +406,19 @@ async function viewPdf(params) {
     .sort((a, b) => (a[1].root || "").localeCompare(b[1].root || "") || (a[1].relpath || "").localeCompare(b[1].relpath || "", "ja"));
   const noPath = [...PDF.values()].filter(r => !r.ipad_path).length;
   main().innerHTML = `<h2>PDF</h2>
+    <div class="card sc-card"><h3>押すだけでUSBのPDFを開く（「ショートカット」アプリを使う）</h3>
+      <p>PDFのボタンを押すと、iPadの「ショートカット」アプリがUSBのそのPDFを開きます。iPadには取り込みません。最初に一度だけ、下の手順で「都名所PDF」というショートカットを作ってください。</p>
+      <ol class="sc-steps">
+        <li>ホーム画面の「<b>ショートカット</b>」アプリを開き、右上の <b>＋</b> を押す。</li>
+        <li>いちばん上の名前のところを押して「名称変更」→ <b>都名所PDF</b> と入れる（1字も違わないように）。</li>
+        <li>下の検索欄に「<b>フォルダからファイルを取得</b>」と入れ、出てきたものを押す。</li>
+        <li>その中の「<b>フォルダ</b>」を押し、<b>${esc(USBNAME)}</b>（USB）→ <b>iPad用PDF</b> を開いて「開く」を押す。</li>
+        <li>「<b>パス</b>」（または「file.txt」の所）を押し、出てきた候補から「<b>ショートカットの入力</b>」を選ぶ。</li>
+        <li>下の検索欄に「<b>クイックルック</b>」と入れ、出てきたものを押す。</li>
+        <li>右上の「<b>完了</b>」（または ✕）を押す。</li>
+      </ol>
+      <div class="bar"><button class="btn pri" id="sc-test">試しに1つ開く</button><span class="small" id="sc-msg">USBを挿して押してください。PDFが出れば成功です。</span></div>
+      <label class="small"><input type="checkbox" id="sc-on" ${OPENMODE === "shortcut" ? "checked" : ""}> PDFのボタンを押したら「ショートカット」で開く（外すと、前のように都名所の中で開き、開くたびにUSBから選ぶ）</label></div>
     <div class="card"><p>外で読む用のPDFは<b>USBの「iPad用PDF › 都名所PDF」</b>に、PCと同じフォルダ分け・同じ名前で入っています（PCが原本、USBはその写し）。iPadには保存しません。<br>
       PDFの行（条や本の画面のPDFのボタンも同じ）を押すと、USBのどこにあるかが出るので、USBから選んで開きます。都名所を開いている間は、同じPDFを選び直さずに開けます。</p>
       <div class="bar"><span class="small">USBの名前（「ファイル」アプリの左に出る名前）</span><input id="usbn" value="${esc(USBNAME)}" style="width:180px"><button class="btn sm" id="usbn-s">変える</button></div>
@@ -411,6 +431,10 @@ async function viewPdf(params) {
         return `<tr class="click" data-id="${id}"><td><b>${esc(nm)}</b>${r.kind ? ` <span class="tag">${esc(r.kind)}</span>` : ""}</td><td class="small">${ip.length && r.ipad_path ? esc(ip.join(" › ")) : `<span class="muted">（iPad用がない）</span>`}</td>
           <td class="num">${r.ipad_pages || ""}</td><td>${SESS.has(id) ? `<span class="pst-now">すぐ開く</span>` : `<span class="pst-usb">USBから選ぶ</span>`}</td></tr>`; }).join("")}</table>
       ${rows.length > 500 ? `<p class="small muted">はじめの500個を出しています。絞ってください。</p>` : ""}</div>`;
+  $("#sc-on").addEventListener("change", async () => { OPENMODE = $("#sc-on").checked ? "shortcut" : "pick"; await kvSet("openmode", OPENMODE); });
+  $("#sc-test").addEventListener("click", () => { const p = [...PDF.keys()].find(k => ipadPath(k) && (PDF.get(k).kind === "翻刻本")) || [...PDF.keys()].find(k => ipadPath(k));
+    if (!p) { $("#sc-msg").textContent = "USBに入っているPDFが見つかりません（持ち出しファイルを取り込んでください）"; return; }
+    $("#sc-msg").textContent = "開こうとしているPDF：" + pdfName(p); location.href = shortcutUrl(p); });
   $("#usbn-s").addEventListener("click", async () => { USBNAME = $("#usbn").value.trim() || USBNAME; await kvSet("usbname", USBNAME); viewPdf(params); });
   const goQ = () => go("pdf?" + new URLSearchParams({q: $("#q").value, ...($("#c-mine").checked ? {mine: "1"} : {})}).toString());
   $("#b-q").addEventListener("click", goQ); $("#c-mine").addEventListener("change", goQ); $("#q").addEventListener("keydown", e => { if (e.key === "Enter") goQ(); });

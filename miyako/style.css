@@ -311,3 +311,8 @@ tr.grp1 td{border-top:2px solid #c9d0d9}
 .pbtn.usb{background:#fff;border:2px solid #9aa3ad;color:#1c2430}
 .pbtn.usb .pst,.pst-usb{background:#e6e9ee;color:#36414e;border:1px solid #9aa3ad}
 .pst-now,.pst-usb{display:inline-block;margin:0 2px}
+/* ショートカットで開く */
+.pbtn.sc{background:#e8f0f6;border:2px solid #1f5f8b;color:#1c2430}
+.pbtn.sc .pst{background:#1f5f8b;color:#fff}
+.sc-card{border:2px solid #1f5f8b}
+.sc-steps{font-size:16px;line-height:2;padding-left:24px}
