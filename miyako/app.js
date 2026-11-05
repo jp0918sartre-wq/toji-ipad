@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05h";
+const APPVER = "2026-11-05i";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -61,9 +61,22 @@ function loadPdfjs() {
 }
 const PV = {doc: null, id: null, page: 1, zoom: 1, task: null, rot: 0};
 const ipadPath = id => ((PDF.get(id) || {}).ipad_path || "");
+// USBから選んだファイルを、都名所のPDFの一覧(PCが見つけたPDF)と名前で突き合わせる
+function findPdfByName(name) {
+  const nm = name.normalize("NFC"); const hit = [...PDF.entries()].filter(([, r]) => ((r.relpath || "").split("\\").pop()).normalize("NFC") === nm);
+  hit.sort((a, b) => (b[1].ipad_path ? 1 : 0) - (a[1].ipad_path ? 1 : 0)); return hit.map(([id]) => id);
+}
+// 本とPDFを結ぶ(iPadで記録し、持ち帰りでPCに入る)。PDFそのものはiPadに保存しない
+async function linkBookPdf(bookId, pdfId) {
+  if (BOOKPDF.some(x => x.book_id === bookId && x.pdf_id === pdfId)) return false;
+  const r = PDF.get(pdfId) || {}, role = r.kind === "翻刻本" ? "翻刻本" : "原文", t = nowStr();
+  BOOKPDF.push({book_id: bookId, pdf_id: pdfId, role, memo: "iPadで結んだ", added_at: t}); await kvSet("book_pdf", BOOKPDF);
+  const T = tx("changes", "readwrite"); T.objectStore("changes").add({tbl: "book_pdf", id: bookId, field: "_link", label: "PDFを結んだ", old: "", new: r.relpath || String(pdfId), pdf_id: pdfId, role, at: t}); await done(T);
+  NCHG++; foot(); return true;
+}
 // USBのPDFを選んでもらう(iPadには保存しない。この画面を開いている間だけ、選んだファイルを覚えておく)
 const SESS = new Map();
-function askPdf(id, page, apId) {
+function askPdf(id, page, apId, bookId) {
   const ip = ipadPath(id), parts = ip.split("/"), nm = pdfName(id);
   $("#ov-body").innerHTML = `<div class="ask"><h3>USBからこのPDFを選んでください</h3>
     <p class="ask-name">${esc(nm)}</p>
@@ -74,12 +87,15 @@ function askPdf(id, page, apId) {
   $("#f-ask").addEventListener("change", () => {
     const f = $("#f-ask").files[0]; if (!f) return;
     if (f.name.normalize() !== nm.normalize() && !confirm(`選んだのは「${f.name}」です。探しているのは「${nm}」です。このまま開きますか？`)) return;
-    SESS.set(id, f); openPdf(id, page, apId);
+    const ids = findPdfByName(f.name), pid = ids.includes(id) ? id : (ids[0] || id);
+    SESS.set(pid, f);
+    if (bookId != null && PDF.has(pid)) linkBookPdf(bookId, pid);       // この本のPDFとして記録する
+    openPdf(pid, page, apId, bookId);
   });
 }
-async function openPdf(id, page, apId) {
+async function openPdf(id, page, apId, bookId) {
   const f = SESS.get(id);
-  if (!f) return askPdf(id, page, apId);
+  if (!f) return askPdf(id, page, apId, bookId);
   await loadPdfjs();
   if (PV.doc && PV.id !== id) { try { PV.doc.destroy(); } catch (e) {} PV.doc = null; }
   $("#ov-body").innerHTML = `<div class="pv-bar"><button class="btn" id="pv-p">◀ 前</button><input id="pv-n" type="number" min="1" value="${page || 1}"><span id="pv-t" class="pv-t"></span><button class="btn" id="pv-nx">次 ▶</button>
@@ -201,7 +217,7 @@ function viewAp(id) {
   main().innerHTML = `${back("meisho/" + a.meisho_id)}<div class="bar"><h2 style="margin:0">${esc(m.name)}　／　${esc(b.title || "")}　<span class="small">${b.year || ""}</span></h2><span style="flex:1"></span>
       ${k > 0 ? `<button class="btn" onclick="go('ap/${sib[k - 1]}')">◀ 前の条</button>` : ""}<span class="small">${k + 1}／${sib.length}</span>${k < sib.length - 1 ? `<button class="btn" onclick="go('ap/${sib[k + 1]}')">次の条 ▶</button>` : ""}</div>
     <p class="small muted">${esc(a.heading || "")}</p>
-    ${pdfs.length ? `<div class="card"><div class="bar"><b>PDF</b>${pdfs.map(p => `<button class="btn sm" data-pdf="${p}">${SESS.has(p) ? "" : "📂 "}${esc(pdfName(p))}</button>`).join("")}<span class="small">頁</span><input id="pg" type="number" value="${a.pdf_page || 1}" style="width:70px"></div></div>` : `<p class="small muted">この条に結んだPDFはありません。</p>`}
+    ${pdfs.length ? `<div class="card"><div class="bar"><b>PDF</b>${pdfs.map(p => `<button class="btn sm" data-pdf="${p}">${SESS.has(p) ? "" : "📂 "}${esc(pdfName(p))}</button>`).join("")}<span class="small">頁</span><input id="pg" type="number" value="${a.pdf_page || 1}" style="width:70px"></div></div>` : (a.book_id != null ? `<div class="card"><div class="bar"><b>PDF</b><span class="small muted">この条の本に結んだPDFはありません。</span><label for="f-link" class="btn pri">📂 USBのPDFを結ぶ</label><input type="file" id="f-link" class="vh"><span class="small" id="link-msg"></span></div></div>` : `<p class="small muted">この条は本が決まっていないので、PDFを結べません（下の「本」を選んで保存）。</p>`)}
     <div class="card form">
       <div class="row"><label>本</label><div><select id="book" style="width:100%"><option value="">（選ぶ）</option>${books.map(x => `<option value="${x.id}" ${x.id === a.book_id ? "selected" : ""}>${x.year || "????"}　${esc(x.title)}</option>`).join("")}</select></div></div>
       ${AP_F.map(([f, l]) => `<div class="row"><label>${l}</label><div><input data-a="${f}" value="${esc(a[f] || "")}" style="width:100%"></div></div>`).join("")}
@@ -210,13 +226,23 @@ function viewAp(id) {
       <label class="small"><input type="checkbox" id="chk" ${a.checked === "1" ? "checked" : ""}> 原本で確かめた</label>
       <div class="bar"><button class="btn pri" id="b-save">保存</button><button class="btn" id="b-prev">縦書きで見る</button><button class="btn" id="b-w">この条をWordで</button><span class="small" id="msg"></span></div>
       <div id="prev" class="honview" hidden></div></div>`;
-  main().querySelectorAll("[data-pdf]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.pdf), $("#pg").value, id)));
+  main().querySelectorAll("[data-pdf]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.pdf), $("#pg").value, id, a.book_id)));
+  if ($("#f-link")) $("#f-link").addEventListener("change", () => pickLink(a.book_id, $("#f-link"), () => viewAp(id)));
   const val = () => { const o = {book_id: $("#book").value ? Number($("#book").value) : null}; main().querySelectorAll("[data-a]").forEach(e => o[e.dataset.a] = e.value);
     main().querySelectorAll("[data-h]").forEach(e => o[e.dataset.h] = e.value); o.checked = $("#chk").checked ? "1" : ""; return o; };
   const labels = Object.fromEntries([...HF, ...AP_F, ["checked", "原本で確かめた"], ["book_id", "本"]]);
   $("#b-save").addEventListener("click", async () => { const n = await saveRow("appear", id, val(), labels); $("#msg").textContent = n ? `保存しました（${n}か所）` : "変わったところはありません"; });
   $("#b-prev").addEventListener("click", () => { const v = val(), p = $("#prev"); p.hidden = !p.hidden; p.innerHTML = HF.filter(([f]) => v[f]).map(([f, l]) => `<div class="honcol"><b>【${l}】</b><div class="tate">${kt(v[f])}</div></div>`).join(""); });
   $("#b-w").addEventListener("click", async () => { $("#msg").textContent = await share(await docxBlob([D.appear.get(id)], null), `翻刻_${m.name}_${b.title || id}.docx`); });
+}
+
+// USBからPDFを選んで、その本に結ぶ
+async function pickLink(bookId, input, after) {
+  const f = input.files[0]; if (!f) return; const msg = $("#link-msg");
+  const ids = findPdfByName(f.name);
+  if (!ids.length) { msg.innerHTML = `<span style="color:var(--bad)">「${esc(f.name)}」は都名所のPDFの一覧にありません。USBの「iPad用PDF › 都名所PDF」の中から選んでください（PCで新しく足したPDFなら、PCで「iPad用PDFを作る」→ 持ち出しファイルを取り込み直す）。</span>`; return; }
+  const ok = await linkBookPdf(bookId, ids[0]); SESS.set(ids[0], f);
+  after(); const m = $("#link-msg"); if (m) m.innerHTML = ok ? `<b style="color:var(--ok)">結びました：${esc(f.name)}</b>（持ち帰りでPCにも入ります）` : `もう結んであります：${esc(f.name)}`;
 }
 
 // ------------------------------------------------------------ 本の台帳
@@ -244,9 +270,10 @@ function viewBook(id) {
   const aps = [...D.appear.values()].filter(a => a.book_id === id);
   main().innerHTML = `${back("books")}<h2>${esc(b.title)}</h2><div class="card form">${F.map(([k, l]) => `<div class="row"><label>${l}</label><div>${k === "memo" ? `<textarea data-k="${k}" rows="3">${esc(b[k] || "")}</textarea>` : `<input data-k="${k}" value="${esc(b[k] ?? "")}" style="width:100%">`}</div></div>`).join("")}
     <div class="bar"><button class="btn pri" id="b-save">保存</button><span class="small" id="msg"></span></div></div>
-    <div class="card"><h3>PDF（USBでの置き場所）</h3>${bookPdfs(id).map(p => { const ip = ipadPath(p); return `<div class="bar"><button class="btn sm" data-pdf="${p}">📂 ${esc(pdfName(p))}</button><span class="small">${ip ? "USB › iPad用PDF › " + esc(ip.split("/").slice(0, -1).join(" › ")) + ((PDF.get(p) || {}).ipad_pages ? `（${PDF.get(p).ipad_pages}頁）` : "") : `<span style="color:var(--warn)">USB用なし（作れなかったか、まだ作っていない）</span>`}</span></div>`; }).join("") || `<p class="small muted">この本に結んだPDFはありません（PCの本の画面で結びます）。</p>`}</div>
+    <div class="card"><div class="bar"><h3 style="margin:0">PDF（USBでの置き場所）</h3><span style="flex:1"></span><label for="f-link" class="btn pri">📂 USBのPDFを結ぶ</label><input type="file" id="f-link" class="vh"></div><p class="small" id="link-msg"></p>${bookPdfs(id).map(p => { const ip = ipadPath(p); return `<div class="bar"><button class="btn sm" data-pdf="${p}">📂 ${esc(pdfName(p))}</button><span class="small">${ip ? "USB › iPad用PDF › " + esc(ip.split("/").slice(0, -1).join(" › ")) + ((PDF.get(p) || {}).ipad_pages ? `（${PDF.get(p).ipad_pages}頁）` : "") : `<span style="color:var(--warn)">USB用なし（作れなかったか、まだ作っていない）</span>`}</span></div>`; }).join("") || `<p class="small muted">この本に結んだPDFはありません（PCの本の画面で結びます）。</p>`}</div>
     <div class="card"><h3>出てくる名所</h3>${aps.map(a => `<div class="link" onclick="go('ap/${a.id}')">${esc((D.meisho.get(a.meisho_id) || {}).name)}　${esc(a.maki || "")}　${esc(a.page || "")}</div>`).join("") || "<p class='small muted'>ありません。</p>"}</div>`;
-  main().querySelectorAll("[data-pdf]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.pdf), 1)));
+  main().querySelectorAll("[data-pdf]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.pdf), 1, null, id)));
+  $("#f-link").addEventListener("change", () => pickLink(id, $("#f-link"), () => viewBook(id)));
   $("#b-save").addEventListener("click", async () => { const o = {}; main().querySelectorAll("[data-k]").forEach(e => o[e.dataset.k] = e.dataset.k === "year" ? (parseInt(e.value) || null) : e.value);
     const n = await saveRow("book", id, o, Object.fromEntries(F)); $("#msg").textContent = n ? `保存しました（${n}か所）` : "変わったところはありません"; });
 }
@@ -336,9 +363,10 @@ async function viewMochi() {
   });
   $("#b-out").addEventListener("click", async () => {
     const ch = await getAll("changes"), ids = {}; STORES.forEach(s => ids[s] = {});
-    ch.forEach(x => { (ids[x.tbl][x.id] = ids[x.tbl][x.id] || new Set()).add(x.field); });
+    ch.forEach(x => { if (!ids[x.tbl]) return; (ids[x.tbl][x.id] = ids[x.tbl][x.id] || new Set()).add(x.field); });
     const d = {format: "miyako-mochikaeri", version: 1, based_on: META.exported_at, made_at: nowStr(), history: ch};
     STORES.forEach(s => d[s] = Object.entries(ids[s]).map(([i, set]) => ({...(D[s].get(Number(i)) || {id: Number(i)}), _changed: [...set].filter(f => f !== "_new")})));
+    d.book_pdf_add = ch.filter(x => x.tbl === "book_pdf").map(x => ({book_id: x.id, pdf_id: x.pdf_id, role: x.role, relpath: x.new, root: (PDF.get(x.pdf_id) || {}).root, at: x.at}));
     const stamp = nowStr().replace(/[-: ]/g, "").slice(0, 12);
     $("#out-msg").textContent = await share(new Blob([JSON.stringify(d)], {type: "application/json"}), `都名所_持ち帰り_${stamp}.json`);
     await kvSet("sent_at", nowStr()); await kvSet("sent_n", NCHG);
