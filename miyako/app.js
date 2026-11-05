@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05";
+const APPVER = "2026-11-05b";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -64,11 +64,11 @@ const ipadPath = id => ((PDF.get(id) || {}).ipad_path || "");
 // まだ覚えていないPDF:「ファイル」のどこにあるかを出して、選んでもらう
 function askPdf(id, page) {
   const ip = ipadPath(id), parts = ip.split("/"), nm = pdfName(id);
-  $("#ov-body").innerHTML = `<div class="ask"><h3>このPDFを「ファイル」から選んでください（初めての1回だけ）</h3>
+  $("#ov-body").innerHTML = `<div class="ask"><h3>このPDFを選んでください（初めての1回だけ）</h3>
     <p class="ask-name">${esc(nm)}</p>
-    ${ip ? `<p>場所：<b>ファイル › このiPad内 › ${parts.slice(0, -1).map(esc).join(" › ")}</b></p>` : `<p class="muted">（このPDFのiPadでの場所が分かりません。PCで「iPad用PDFを作る」を動かしたあとの持ち出しファイルを取り込むと出ます）</p>`}
+    ${ip ? `<p>USBを挿して、下のボタンから<br><b>USB › iPad用PDF › ${parts.slice(0, -1).map(esc).join(" › ")}</b><br>を開き、このPDFを選んでください。</p>` : `<p class="muted">（このPDFのiPadでの場所が分かりません。PCで「iPad用PDFを作る」を動かしたあとの持ち出しファイルを取り込むと出ます）</p>`}
     <label for="f-ask" class="btn pri big">📂 ファイルから選ぶ</label><input type="file" id="f-ask" class="vh">
-    <p class="small" id="ask-msg">選ぶと、都名所が覚えて、次からはすぐ開きます。</p></div>`;
+    <p class="small" id="ask-msg">選ぶと、都名所が覚えて、次からはUSBが無くてもすぐ開きます。</p></div>`;
   $("#ov").hidden = false;
   $("#f-ask").addEventListener("change", async () => {
     const f = $("#f-ask").files[0]; if (!f) return;
@@ -276,14 +276,14 @@ async function viewPdf(params) {
   const noPath = [...PDF.values()].filter(r => !r.ipad_path).length;
   main().innerHTML = `<h2>PDF</h2>
     <div class="card"><h3>しくみ</h3>
-      <p>軽くしたPDFは、iPadの「ファイル」の <b>このiPad内 › 都名所PDF</b> に、PCと同じフォルダ分け・同じ名前で置いておきます（USBからフォルダごとコピー）。<br>
-      条の画面や下の一覧でPDFを押すと、<b>初めての1回だけ</b>「ファイル」から選ぶ画面になります。選ぶと都名所が覚えて、次からは押すだけで指定の頁が開きます。</p>
+      <p>軽くしたPDFは<b>USBの「iPad用PDF › 都名所PDF」</b>に、PCと同じフォルダ分け・同じ名前で入っています。iPadにコピーする必要はありません。<br>
+      条の画面や下の一覧でPDFを押すと、<b>初めての1回だけ</b>選ぶ画面になるので、USBを挿してそのPDFを選びます。選ぶと都名所が覚えて、次からはUSBが無くても、押すだけで指定の頁が開きます。</p>
       <p class="small muted">覚えているPDF ${fmt(memo.length)} 個（${gbs(memoSize)}）${noPath && PDF.size ? `。iPadでの場所が分からないPDF ${fmt(noPath)} 個（PCで「iPad用PDFを作る」のあとの持ち出しファイルを取り込むと出ます）` : ""}</p>
       ${memo.length ? `<button class="btn sm" id="b-forget">覚えたPDFを忘れる（iPadの空きを増やす）</button>` : ""}</div>
     <div class="card"><h3>PDFの一覧</h3><div class="bar"><input id="q" value="${esc(q)}" placeholder="ファイル名・フォルダ名（例：京都叢書）"><button class="btn pri" id="b-q">絞る</button>
       <label class="small"><input type="checkbox" id="c-mine" ${mine ? "checked" : ""}> 覚えているものだけ</label><span class="small">${fmt(rows.length)} 個</span></div>
       ${PDF.size ? "" : `<p class="small muted">持ち出しファイルを取り込むと、PDFの一覧が出ます。</p>`}
-      <table class="tb"><tr><th>ファイル</th><th>「ファイル」の このiPad内 での場所</th><th class="num">頁</th><th></th></tr>
+      <table class="tb"><tr><th>ファイル</th><th>USBの「iPad用PDF」の中の場所</th><th class="num">頁</th><th></th></tr>
       ${rows.slice(0, 500).map(([id, r]) => { const ip = (r.ipad_path || "").split("/"); const nm = ip.length > 1 ? ip.pop() : (r.relpath || "").split("\\").pop();
         return `<tr class="click" data-id="${id}"><td><b>${esc(nm)}</b>${r.kind ? ` <span class="tag">${esc(r.kind)}</span>` : ""}</td><td class="small">${ip.length && r.ipad_path ? esc(ip.join(" › ")) : `<span class="muted">（iPad用がない）</span>`}</td>
           <td class="num">${r.ipad_pages || ""}</td><td>${PDFHAVE.has(id) ? `<span class="tag ok">覚えている</span>` : ""}</td></tr>`; }).join("")}</table>
