@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05p";
+const APPVER = "2026-11-05q";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -33,7 +33,7 @@ let META = null, D = {appear: new Map(), book: new Map(), meisho: new Map(), kak
 async function loadAll() {
   // PDFはiPadに保存しない(USBが外で読む用の写し。iPadに入れると二重管理になる)。前に保存した分は一度だけ消して空きを戻す
   if (!(await kvGet("pdfs_cleared_1105"))) { const T = tx("pdfs", "readwrite"); T.objectStore("pdfs").clear(); await done(T); await kvSet("pdfinfo", {}); await kvSet("bundles", {}); await kvSet("pdfs_cleared_1105", nowStr()); }
-  PDFINFO = {};
+  PDFINFO = {}; USBNAME = (await kvGet("usbname")) || USBNAME;
   META = await kvGet("meta"); if (!META) return;
   HF = META.hf || HF;
   for (const s of STORES) D[s] = new Map((await getAll(s)).map(r => [r.id, r]));
@@ -61,6 +61,11 @@ function loadPdfjs() {
 }
 const PV = {doc: null, id: null, page: 1, zoom: 1, task: null, rot: 0};
 const ipadPath = id => ((PDF.get(id) || {}).ipad_path || "");
+// USBのPDFを「ファイル」アプリで直接開くリンク(iPadの外付けの場所。USBの名前は「PDF」の画面で変えられる)
+let USBNAME = "SSPE-USC";
+const usbUrl = id => { const ip = ipadPath(id); if (!ip) return "";
+  return "shareddocuments:///private/var/mobile/Library/LiveFiles/com.apple.filesystems.userfsd/" + [USBNAME, "iPad用PDF", ...ip.split("/")].map(encodeURIComponent).join("/"); };
+const usbBtn = id => usbUrl(id) ? `<a class="btn sm usbopen" href="${usbUrl(id)}">USBで開く</a>` : "";
 // USBから選んだファイルを、都名所のPDFの一覧(PCが見つけたPDF)と名前で突き合わせる
 function findPdfByName(name) {
   const nm = name.normalize("NFC"); const hit = [...PDF.entries()].filter(([, r]) => ((r.relpath || "").split("\\").pop()).normalize("NFC") === nm);
@@ -301,7 +306,7 @@ function viewBook(id) {
   main().innerHTML = `${back("books")}<h2>${esc(b.title)}</h2><div class="card form">${F.map(([k, l]) => `<div class="row"><label>${l}</label><div>${k === "memo" ? `<textarea data-k="${k}" rows="3">${esc(b[k] || "")}</textarea>` : `<input data-k="${k}" value="${esc(b[k] ?? "")}" style="width:100%">`}</div></div>`).join("")}
     <div class="bar"><button class="btn pri" id="b-save">保存</button><span class="small" id="msg"></span></div></div>
     <div class="card"><div class="bar"><h3 style="margin:0">PDF（USBでの置き場所）</h3><span style="flex:1"></span>${bookPdfs(id).length ? `<button class="btn sm" id="b-choose">＋ ほかのPDFも結ぶ</button><label for="f-link" class="btn sm" style="display:none">USB</label>` : `<button class="btn pri" id="b-choose">＋ 一覧から選んで結ぶ</button><label for="f-link" class="btn">📂 USBから選んで結ぶ</label>`}<input type="file" id="f-link" class="vh"></div>
-    ${bookPdfs(id).length ? `<p class="small">PDFの名前のボタンを押すと開きます。</p>` : ""}<p class="small" id="link-msg"></p>${bookPdfs(id).map(p => { const ip = ipadPath(p), lk = BOOKPDF.find(x => x.book_id === id && x.pdf_id === p) || {}; return `<div class="pdfrow"><button class="btn sm" data-pdf="${p}">📂 ${esc(pdfName(p))}</button>${lk.memo === "自動で結んだ" ? `<span class="tag warn">自動で結んだ（確かめて）</span>` : lk.memo === "iPadで結んだ" ? `<span class="tag acc">iPadで結んだ</span>` : ""}<span style="flex:1"></span><button class="btn sm danger" data-unlink="${p}">外す</button><div class="small" style="width:100%">${ip ? "USB › iPad用PDF › " + esc(ip.split("/").slice(0, -1).join(" › ")) + ((PDF.get(p) || {}).ipad_pages ? `（${PDF.get(p).ipad_pages}頁）` : "") : `<span style="color:var(--warn)">USB用なし（作れなかったか、まだ作っていない）</span>`}</div></div>`; }).join("") || `<p class="small muted">この本に結んだPDFはありません。右上の「＋ 一覧から選んで結ぶ」で結べます。</p>`}</div>
+    ${bookPdfs(id).length ? `<p class="small">PDFの名前のボタンを押すと開きます。</p>` : ""}<p class="small" id="link-msg"></p>${bookPdfs(id).map(p => { const ip = ipadPath(p), lk = BOOKPDF.find(x => x.book_id === id && x.pdf_id === p) || {}; return `<div class="pdfrow"><button class="btn sm" data-pdf="${p}">📂 ${esc(pdfName(p))}</button>${lk.memo === "自動で結んだ" ? `<span class="tag warn">自動で結んだ（確かめて）</span>` : lk.memo === "iPadで結んだ" ? `<span class="tag acc">iPadで結んだ</span>` : ""}${usbBtn(p)}<span style="flex:1"></span><button class="btn sm danger" data-unlink="${p}">外す</button><div class="small" style="width:100%">${ip ? "USB › iPad用PDF › " + esc(ip.split("/").slice(0, -1).join(" › ")) + ((PDF.get(p) || {}).ipad_pages ? `（${PDF.get(p).ipad_pages}頁）` : "") : `<span style="color:var(--warn)">USB用なし（作れなかったか、まだ作っていない）</span>`}</div></div>`; }).join("") || `<p class="small muted">この本に結んだPDFはありません。右上の「＋ 一覧から選んで結ぶ」で結べます。</p>`}</div>
     <div class="card"><h3>出てくる名所</h3>${aps.map(a => `<div class="link" onclick="go('ap/${a.id}')">${esc((D.meisho.get(a.meisho_id) || {}).name)}　${esc(a.maki || "")}　${esc(a.page || "")}</div>`).join("") || "<p class='small muted'>ありません。</p>"}</div>`;
   main().querySelectorAll("[data-pdf]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.pdf), 1, null, id)));
   $("#f-link").addEventListener("change", () => pickLink(id, $("#f-link"), () => viewBook(id)));
@@ -369,7 +374,7 @@ function viewLinks(params) {
     <table class="tb"><tr><th>刊年</th><th>書名</th><th>結んだPDF</th><th>USBでの場所</th><th class="num">頁</th><th>結び方</th></tr>
     ${rows.slice(0, 600).map(({x, b, r}, i) => { const first = i === 0 || rows[i - 1].x.book_id !== x.book_id; const ip = (r.ipad_path || "").split("/"); ip.pop();
       return `<tr${first ? ' class="grp1"' : ""}><td>${first ? (b.year || "") : ""}</td><td>${first ? `<span class="link" data-book="${b.id}"><b>${esc(b.title)}</b></span><div class="small">${esc(b.sosho || "")} ${esc(b.sosho_kan || "")}</div>` : ""}</td>
-        <td><b>${esc(pdfName(x.pdf_id))}</b>${r.kind ? ` <span class="tag">${esc(r.kind)}</span>` : ""}</td><td class="small">${r.ipad_path ? esc(ip.join(" › ")) : `<span style="color:var(--warn)">USB用なし</span>`}</td>
+        <td><b>${esc(pdfName(x.pdf_id))}</b>${r.kind ? ` <span class="tag">${esc(r.kind)}</span>` : ""}<div>${usbBtn(x.pdf_id)}</div></td><td class="small">${r.ipad_path ? esc(ip.join(" › ")) : `<span style="color:var(--warn)">USB用なし</span>`}</td>
         <td class="num">${r.ipad_pages || ""}</td><td><span class="tag ${HOW[howOf(x)][1]}">${HOW[howOf(x)][0]}</span></td></tr>`; }).join("")}</table>
     ${rows.length > 600 ? `<p class="small muted">はじめの600件を出しています。絞ってください。</p>` : ""}</div>`;
   const goL = (h = how) => go("links?" + new URLSearchParams({q: $("#q").value, how: h}).toString());
@@ -388,6 +393,7 @@ async function viewPdf(params) {
   main().innerHTML = `<h2>PDF</h2>
     <div class="card"><p>外で読む用のPDFは<b>USBの「iPad用PDF › 都名所PDF」</b>に、PCと同じフォルダ分け・同じ名前で入っています（PCが原本、USBはその写し）。iPadには保存しません。<br>
       PDFの行（条や本の画面のPDFのボタンも同じ）を押すと、USBのどこにあるかが出るので、USBから選んで開きます。都名所を開いている間は、同じPDFを選び直さずに開けます。</p>
+      <div class="bar"><span class="small">USBの名前（「ファイル」アプリの左に出る名前）</span><input id="usbn" value="${esc(USBNAME)}" style="width:180px"><button class="btn sm" id="usbn-s">変える</button></div>
       <p class="small muted">PDF ${fmt(PDF.size)} 個のうち、USBに入っている ${fmt(PDF.size - noPath)} 個${noPath && PDF.size ? `・USB用なし ${fmt(noPath)} 個` : ""}。</p></div>
     <div class="card"><h3>PDFの一覧</h3><div class="bar"><input id="q" type="search" enterkeyhint="search" autocomplete="off" value="${esc(q)}" placeholder="ファイル名・フォルダ名（例：京都叢書）"><button class="btn pri" id="b-q">絞る</button>
       <label class="small"><input type="checkbox" id="c-mine" ${mine ? "checked" : ""}> USBに入っているものだけ</label><span class="small">${fmt(rows.length)} 個</span></div>
@@ -397,6 +403,7 @@ async function viewPdf(params) {
         return `<tr class="click" data-id="${id}"><td><b>${esc(nm)}</b>${r.kind ? ` <span class="tag">${esc(r.kind)}</span>` : ""}</td><td class="small">${ip.length && r.ipad_path ? esc(ip.join(" › ")) : `<span class="muted">（iPad用がない）</span>`}</td>
           <td class="num">${r.ipad_pages || ""}</td><td>${SESS.has(id) ? `<span class="tag ok">選んである</span>` : ""}</td></tr>`; }).join("")}</table>
       ${rows.length > 500 ? `<p class="small muted">はじめの500個を出しています。絞ってください。</p>` : ""}</div>`;
+  $("#usbn-s").addEventListener("click", async () => { USBNAME = $("#usbn").value.trim() || USBNAME; await kvSet("usbname", USBNAME); viewPdf(params); });
   const goQ = () => go("pdf?" + new URLSearchParams({q: $("#q").value, ...($("#c-mine").checked ? {mine: "1"} : {})}).toString());
   $("#b-q").addEventListener("click", goQ); $("#c-mine").addEventListener("change", goQ); $("#q").addEventListener("keydown", e => { if (e.key === "Enter") goQ(); });
   main().querySelectorAll("tr.click[data-id]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.id), 1)));
