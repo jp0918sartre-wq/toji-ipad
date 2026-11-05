@@ -292,3 +292,5 @@ input#q{font-size:17px;padding:8px 12px;min-width:260px;border:2px solid #8a93a1
 .seg button:first-child{border-radius:8px 0 0 8px}.seg button:last-child{border-radius:0 8px 8px 0}
 .seg button+button{border-left:none}
 .seg button.on{background:#1f5f8b;color:#fff}
+.pdfrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 0;border-bottom:1px solid #eef0f4}
+.btn.danger{border-color:#b3352c;color:#b3352c}

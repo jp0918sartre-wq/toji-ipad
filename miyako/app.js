@@ -1,7 +1,7 @@
 "use strict";
 // 都名所（iPad）: 家のPCの「都名所アプリ」から持ち出したデータを、iPadの中(IndexedDB)だけで使う。
 // ネットが無くても、名所を年代順に見る・引き比べる・翻刻などを打つ・掛詞を直す・Word/Excelに書き出す、ができる。
-const APPVER = "2026-11-05j";
+const APPVER = "2026-11-05k";
 const $ = s => document.querySelector(s);
 const main = () => $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -72,6 +72,12 @@ async function linkBookPdf(bookId, pdfId) {
   const r = PDF.get(pdfId) || {}, role = r.kind === "翻刻本" ? "翻刻本" : "原文", t = nowStr();
   BOOKPDF.push({book_id: bookId, pdf_id: pdfId, role, memo: "iPadで結んだ", added_at: t}); await kvSet("book_pdf", BOOKPDF);
   const T = tx("changes", "readwrite"); T.objectStore("changes").add({tbl: "book_pdf", id: bookId, field: "_link", label: "PDFを結んだ", old: "", new: r.relpath || String(pdfId), pdf_id: pdfId, role, at: t}); await done(T);
+  NCHG++; foot(); return true;
+}
+async function unlinkBookPdf(bookId, pdfId) {
+  const k = BOOKPDF.findIndex(x => x.book_id === bookId && x.pdf_id === pdfId); if (k < 0) return false;
+  const r = PDF.get(pdfId) || {}, t = nowStr(); BOOKPDF.splice(k, 1); await kvSet("book_pdf", BOOKPDF);
+  const T = tx("changes", "readwrite"); T.objectStore("changes").add({tbl: "book_pdf", id: bookId, field: "_unlink", label: "PDFを外した", old: r.relpath || String(pdfId), new: "", pdf_id: pdfId, at: t}); await done(T);
   NCHG++; foot(); return true;
 }
 // USBのPDFを選んでもらう(iPadには保存しない。この画面を開いている間だけ、選んだファイルを覚えておく)
@@ -275,10 +281,13 @@ function viewBook(id) {
   const aps = [...D.appear.values()].filter(a => a.book_id === id);
   main().innerHTML = `${back("books")}<h2>${esc(b.title)}</h2><div class="card form">${F.map(([k, l]) => `<div class="row"><label>${l}</label><div>${k === "memo" ? `<textarea data-k="${k}" rows="3">${esc(b[k] || "")}</textarea>` : `<input data-k="${k}" value="${esc(b[k] ?? "")}" style="width:100%">`}</div></div>`).join("")}
     <div class="bar"><button class="btn pri" id="b-save">保存</button><span class="small" id="msg"></span></div></div>
-    <div class="card"><div class="bar"><h3 style="margin:0">PDF（USBでの置き場所）</h3><span style="flex:1"></span><label for="f-link" class="btn pri">📂 USBのPDFを結ぶ</label><input type="file" id="f-link" class="vh"></div><p class="small" id="link-msg"></p>${bookPdfs(id).map(p => { const ip = ipadPath(p); return `<div class="bar"><button class="btn sm" data-pdf="${p}">📂 ${esc(pdfName(p))}</button><span class="small">${ip ? "USB › iPad用PDF › " + esc(ip.split("/").slice(0, -1).join(" › ")) + ((PDF.get(p) || {}).ipad_pages ? `（${PDF.get(p).ipad_pages}頁）` : "") : `<span style="color:var(--warn)">USB用なし（作れなかったか、まだ作っていない）</span>`}</span></div>`; }).join("") || `<p class="small muted">この本に結んだPDFはありません（PCの本の画面で結びます）。</p>`}</div>
+    <div class="card"><div class="bar"><h3 style="margin:0">PDF（USBでの置き場所）</h3><span style="flex:1"></span><label for="f-link" class="btn pri">📂 USBのPDFを結ぶ</label><input type="file" id="f-link" class="vh"></div><p class="small" id="link-msg"></p>${bookPdfs(id).map(p => { const ip = ipadPath(p), lk = BOOKPDF.find(x => x.book_id === id && x.pdf_id === p) || {}; return `<div class="pdfrow"><button class="btn sm" data-pdf="${p}">📂 ${esc(pdfName(p))}</button>${lk.memo === "自動で結んだ" ? `<span class="tag warn">自動で結んだ（確かめて）</span>` : lk.memo === "iPadで結んだ" ? `<span class="tag acc">iPadで結んだ</span>` : ""}<span style="flex:1"></span><button class="btn sm danger" data-unlink="${p}">外す</button><div class="small" style="width:100%">${ip ? "USB › iPad用PDF › " + esc(ip.split("/").slice(0, -1).join(" › ")) + ((PDF.get(p) || {}).ipad_pages ? `（${PDF.get(p).ipad_pages}頁）` : "") : `<span style="color:var(--warn)">USB用なし（作れなかったか、まだ作っていない）</span>`}</div></div>`; }).join("") || `<p class="small muted">この本に結んだPDFはありません。右上の「📂 USBのPDFを結ぶ」で結べます。</p>`}</div>
     <div class="card"><h3>出てくる名所</h3>${aps.map(a => `<div class="link" onclick="go('ap/${a.id}')">${esc((D.meisho.get(a.meisho_id) || {}).name)}　${esc(a.maki || "")}　${esc(a.page || "")}</div>`).join("") || "<p class='small muted'>ありません。</p>"}</div>`;
   main().querySelectorAll("[data-pdf]").forEach(e => e.addEventListener("click", () => openPdf(Number(e.dataset.pdf), 1, null, id)));
   $("#f-link").addEventListener("change", () => pickLink(id, $("#f-link"), () => viewBook(id)));
+  main().querySelectorAll("[data-unlink]").forEach(e => e.addEventListener("click", async () => { const p = Number(e.dataset.unlink);
+    if (!confirm(`「${pdfName(p)}」をこの本から外しますか？（PDFは消えません。持ち帰りでPCでも外れます）`)) return;
+    await unlinkBookPdf(id, p); viewBook(id); const m = $("#link-msg"); if (m) m.innerHTML = `<b>外しました：${esc(pdfName(p))}</b>`; }));
   $("#b-save").addEventListener("click", async () => { const o = {}; main().querySelectorAll("[data-k]").forEach(e => o[e.dataset.k] = e.dataset.k === "year" ? (parseInt(e.value) || null) : e.value);
     const n = await saveRow("book", id, o, Object.fromEntries(F)); $("#msg").textContent = n ? `保存しました（${n}か所）` : "変わったところはありません"; });
 }
@@ -371,7 +380,7 @@ async function viewMochi() {
     ch.forEach(x => { if (!ids[x.tbl]) return; (ids[x.tbl][x.id] = ids[x.tbl][x.id] || new Set()).add(x.field); });
     const d = {format: "miyako-mochikaeri", version: 1, based_on: META.exported_at, made_at: nowStr(), history: ch};
     STORES.forEach(s => d[s] = Object.entries(ids[s]).map(([i, set]) => ({...(D[s].get(Number(i)) || {id: Number(i)}), _changed: [...set].filter(f => f !== "_new")})));
-    d.book_pdf_add = ch.filter(x => x.tbl === "book_pdf").map(x => ({book_id: x.id, pdf_id: x.pdf_id, role: x.role, relpath: x.new, root: (PDF.get(x.pdf_id) || {}).root, at: x.at}));
+    d.book_pdf_ops = ch.filter(x => x.tbl === "book_pdf").map(x => ({op: x.field === "_unlink" ? "del" : "add", book_id: x.id, pdf_id: x.pdf_id, role: x.role, relpath: x.field === "_unlink" ? x.old : x.new, root: (PDF.get(x.pdf_id) || {}).root, at: x.at}));
     const stamp = nowStr().replace(/[-: ]/g, "").slice(0, 12);
     $("#out-msg").textContent = await share(new Blob([JSON.stringify(d)], {type: "application/json"}), `都名所_持ち帰り_${stamp}.json`);
     await kvSet("sent_at", nowStr()); await kvSet("sent_n", NCHG);
